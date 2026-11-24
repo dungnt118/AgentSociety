@@ -41,6 +41,7 @@
           <label class="sr-only" for="agent-select" data-i18n="nav.agent">Cư dân</label>
           <select id="agent-select"></select>
         </div>
+        <button type="button" class="ctrl-btn nav-refresh-btn" id="manual-refresh-btn" data-i18n="nav.refresh" data-i18n-title="nav.refreshTitle" title="Làm mới dữ liệu ngay">↻ Làm mới</button>
         <div class="nav-status" id="run-status">
           <span class="status-dot" id="status-dot"></span>
           <span id="status-text" data-i18n="nav.connecting">Đang kết nối…</span>
@@ -98,6 +99,18 @@
           <p class="kpi-label" data-i18n="kpi.activityLabel">Nhật ký hoạt động</p>
           <p class="kpi-value" id="kpi-env">0</p>
           <p class="kpi-sub" id="kpi-env-fail">Thất bại 0 lần</p>
+        </div>
+      </div>
+      <div class="kpi-card kpi-cost kpi-clickable" id="kpi-cost-card" role="button" tabindex="0" data-i18n-title="kpi.costTooltip" title="Bấm để xem chi tiết Token &amp; Chi phí">
+        <div class="kpi-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="9" />
+            <path d="M14.8 9a2 2 0 00-1.8-1h-2a2 2 0 000 4h2a2 2 0 010 4h-2a2 2 0 01-1.8-1" />
+            <path d="M12 6v2m0 8v2" />
+          </svg></div>
+        <div class="kpi-body">
+          <p class="kpi-label" data-i18n="kpi.costLabel">Token &amp; Chi phí (ước tính)</p>
+          <p class="kpi-value" id="kpi-cost">—</p>
+          <p class="kpi-sub" id="kpi-tokens" data-i18n="kpi.costEmpty">Chưa có dữ liệu token</p>
         </div>
       </div>
     </div>

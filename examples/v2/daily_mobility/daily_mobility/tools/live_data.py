@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 from collections import Counter
 from datetime import UTC, datetime
@@ -1850,6 +1851,135 @@ def load_agent_activity_log(
     }
 
 
+_FALLBACK_TOKEN_PRICES_USD: dict[str, tuple[float, float, float]] = {
+    "gpt-5.4-mini": (7.5e-7, 7.5e-8, 4.5e-6),
+    "gpt-5.4-nano": (2.0e-7, 2.0e-8, 1.25e-6),
+    "gpt-5.5": (5.0e-6, 5.0e-7, 3.0e-5),
+    "gpt-4o-mini": (1.5e-7, 7.5e-8, 6.0e-7),
+    "gpt-4o": (2.5e-6, 1.25e-6, 1.0e-5),
+    "gpt-4.1-mini": (4.0e-7, 1.0e-7, 1.6e-6),
+}
+
+
+def _resolve_model_token_rates(model: str) -> tuple[float, float, float, bool]:
+    """Return (input_rate, cached_input_rate, output_rate, pricing_known) in USD/token."""
+    candidates = [model, f"openai/{model}"]
+    if model.startswith("openai/"):
+        candidates.append(model.split("/", 1)[1])
+
+    try:
+        import litellm
+
+        model_cost = getattr(litellm, "model_cost", {}) or {}
+        for key in candidates:
+            info = model_cost.get(key)
+            if isinstance(info, dict) and info.get("input_cost_per_token") is not None:
+                in_rate = float(info["input_cost_per_token"])
+                out_rate = float(info.get("output_cost_per_token") or 0.0)
+                cached_raw = info.get("cache_read_input_token_cost")
+                cached_rate = float(cached_raw) if cached_raw is not None else in_rate
+                return in_rate, cached_rate, out_rate, True
+    except Exception:
+        pass
+
+    base_name = model.split("/", 1)[-1]
+    if base_name in _FALLBACK_TOKEN_PRICES_USD:
+        in_r, cached_r, out_r = _FALLBACK_TOKEN_PRICES_USD[base_name]
+        return in_r, cached_r, out_r, True
+    for prefix, rates in _FALLBACK_TOKEN_PRICES_USD.items():
+        if base_name.startswith(prefix):
+            return rates[0], rates[1], rates[2], True
+    return 0.0, 0.0, 0.0, False
+
+
+def load_llm_stats(run_dir: Path) -> dict[str, Any]:
+    """Read LLM_STATS.json (if present) and enrich with estimated USD/VND cost."""
+    raw = read_json_object(run_dir / "LLM_STATS.json")
+    if not raw:
+        return {"available": False}
+
+    try:
+        usd_to_vnd = float(os.getenv("DASHBOARD_USD_TO_VND", "25500") or 25500)
+    except ValueError:
+        usd_to_vnd = 25500.0
+
+    raw_models = raw.get("models") if isinstance(raw.get("models"), dict) else {}
+    models_out: dict[str, Any] = {}
+    total_cost_usd = 0.0
+    total_saved_usd = 0.0
+    any_known_price = False
+
+    for model_name, s in raw_models.items():
+        if not isinstance(s, dict):
+            continue
+        calls = int(s.get("calls") or 0)
+        input_tok = int(s.get("input") or 0)
+        cached_tok = min(input_tok, int(s.get("cached_input") or 0))
+        uncached_tok = max(0, input_tok - cached_tok)
+        output_tok = int(s.get("output") or 0)
+
+        in_rate, cached_rate, out_rate, known = _resolve_model_token_rates(str(model_name))
+        if known:
+            any_known_price = True
+        cost_usd = uncached_tok * in_rate + cached_tok * cached_rate + output_tok * out_rate
+        saved_usd = cached_tok * max(0.0, in_rate - cached_rate)
+        total_cost_usd += cost_usd
+        total_saved_usd += saved_usd
+
+        models_out[str(model_name)] = {
+            "calls": calls,
+            "input": input_tok,
+            "cached_input": cached_tok,
+            "uncached_input": uncached_tok,
+            "output": output_tok,
+            "cost_usd": round(cost_usd, 6),
+            "cost_vnd": round(cost_usd * usd_to_vnd),
+            "saved_by_cache_usd": round(saved_usd, 6),
+            "pricing_known": known,
+            "rates_per_1m": {
+                "input": round(in_rate * 1_000_000, 4),
+                "cached": round(cached_rate * 1_000_000, 4),
+                "output": round(out_rate * 1_000_000, 4),
+            },
+        }
+
+    totals = raw.get("totals") if isinstance(raw.get("totals"), dict) else {}
+    total_in = int(totals.get("input") or sum(m["input"] for m in models_out.values()))
+    total_cached = int(
+        totals.get("cached_input") or sum(m["cached_input"] for m in models_out.values())
+    )
+    total_out = int(totals.get("output") or sum(m["output"] for m in models_out.values()))
+    total_calls = int(totals.get("calls") or sum(m["calls"] for m in models_out.values()))
+    hit_rate = (
+        float(raw["cache_hit_rate"])
+        if raw.get("cache_hit_rate") is not None
+        else (total_cached / total_in if total_in > 0 else 0.0)
+    )
+
+    return {
+        "available": True,
+        "step_count": raw.get("step_count"),
+        "current_time": raw.get("current_time"),
+        "totals": {
+            "calls": total_calls,
+            "input": total_in,
+            "cached_input": total_cached,
+            "uncached_input": max(0, total_in - total_cached),
+            "output": total_out,
+        },
+        "cache_hit_rate": hit_rate,
+        "pricing_known": any_known_price,
+        "usd_to_vnd": usd_to_vnd,
+        "cost_usd": round(total_cost_usd, 6),
+        "cost_vnd": round(total_cost_usd * usd_to_vnd),
+        "saved_by_cache_usd": round(total_saved_usd, 6),
+        "saved_by_cache_vnd": round(total_saved_usd * usd_to_vnd),
+        "models": models_out,
+        "agent_side": raw.get("agent_side"),
+        "router_side": raw.get("router_side"),
+    }
+
+
 def build_dashboard_payload(
     run_dir: Path,
     log_file: Path | None = None,
@@ -1986,6 +2116,7 @@ def build_dashboard_payload(
         },
         "env_calls": env_trace,
         "activity_log": activity_log,
+        "llm_stats": load_llm_stats(run_dir),
         "timing": timing,
         "milestones": milestones,
         "milestone_colors": MILESTONE_COLORS,

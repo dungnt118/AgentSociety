@@ -1,6 +1,7 @@
 /* Daily Mobility Benchmark — Live Dashboard */
 
 const POLL_MS = 2500;
+const IDLE_POLL_MS = 30000;
 const _t = (key, vars) => (window.DashboardI18n ? window.DashboardI18n.t(key, vars) : key);
 const getIntentionLabel = (k) => (window.DashboardI18n ? window.DashboardI18n.intentionLabel(k) : k || "—");
 const getScheduleActivityLabel = (k) => (window.DashboardI18n ? window.DashboardI18n.scheduleActivityLabel(k) : k || "—");
@@ -99,6 +100,13 @@ let envFilterOnlyFail = false;
 let lastSlotsDone = -1;
 let mapViewMode = readMapViewMode();
 const kpiAnim = { hunger: null, env: null };
+let lastStateFingerprint = null;
+let lastActivityRenderKey = null;
+const seenActivityKeysByAgent = new Map();
+let drawerMode = null;
+let drawerReasonLang = "vi";
+let drawerPromptLang = "vi";
+const reasonTranslations = new Map();
 
 const MILESTONE_LANE_STEP_PX = 15;
 const MILESTONE_LABEL_PAD_PX = 26;
@@ -516,6 +524,29 @@ function countRecordedMeals(data) {
   return n;
 }
 
+function formatUsd(usd) {
+  const v = Number(usd);
+  if (!Number.isFinite(v)) return "—";
+  if (v === 0) return "$0.00";
+  if (v >= 1) return `$${v.toFixed(2)}`;
+  if (v >= 0.01) return `$${v.toFixed(3)}`;
+  return `$${v.toFixed(4)}`;
+}
+
+function formatVnd(vnd) {
+  const v = Number(vnd);
+  if (!Number.isFinite(v)) return "—";
+  return `~${Math.round(v).toLocaleString("vi-VN")}₫`;
+}
+
+function formatCompactTokens(n) {
+  const v = Number(n);
+  if (!Number.isFinite(v)) return "0 tok";
+  if (v >= 1_000_000) return `${(v / 1_000_000).toFixed(2)}M tok`;
+  if (v >= 1_000) return `${(v / 1_000).toFixed(1)}K tok`;
+  return `${Math.round(v)} tok`;
+}
+
 function updateKpiCards(data) {
   const done = data.meta?.slots_done ?? 0;
   const t = data.timing || {};
@@ -564,6 +595,35 @@ function updateKpiCards(data) {
   if (envFailEl) {
     envFailEl.textContent = _t("kpi.activityFail", { count: failCount });
     envFailEl.classList.toggle("kpi-danger", failCount > 0);
+  }
+
+  const llm = data.llm_stats;
+  const costEl = $("kpi-cost");
+  const tokensEl = $("kpi-tokens");
+  if (costEl && tokensEl) {
+    if (!llm || !llm.available) {
+      costEl.textContent = "—";
+      tokensEl.textContent = _t("kpi.costEmpty");
+    } else {
+      const totals = llm.totals || {};
+      const totalTok = (totals.input || 0) + (totals.output || 0);
+      const hitPct = ((llm.cache_hit_rate || 0) * 100).toFixed(1);
+      if (llm.pricing_known) {
+        costEl.textContent = formatUsd(llm.cost_usd);
+        tokensEl.textContent = _t("kpi.costSub", {
+          vnd: formatVnd(llm.cost_vnd),
+          calls: totals.calls || 0,
+          tokens: formatCompactTokens(totalTok),
+          rate: hitPct,
+        });
+      } else {
+        costEl.textContent = formatCompactTokens(totalTok);
+        tokensEl.textContent = _t("kpi.costSubNoPrice", {
+          calls: totals.calls || 0,
+          tokens: formatCompactTokens(totalTok),
+        });
+      }
+    }
   }
 
   if (done > lastSlotsDone && lastSlotsDone >= 0) {
@@ -1910,6 +1970,10 @@ function buildActivityCategoryFilters(data) {
   });
 }
 
+function activityRecordKey(r) {
+  return `${r.slot ?? ""}|${r.category ?? ""}|${r.kind ?? ""}|${r.simulation_time ?? ""}|${r.summary ?? ""}|${r.ok ?? ""}`;
+}
+
 function updateEnvCalls(data) {
   const summaryEl = $("env-summary");
   const list = $("env-calls-list");
@@ -1917,6 +1981,28 @@ function updateEnvCalls(data) {
   const allRecords = activity.records || [];
   const summary = activity.summary || {};
   const records = allRecords.filter((r) => activityRecordPassesFilter(r, data));
+
+  const agentId = Number(data.meta?.agent_id ?? selectedAgentId);
+  const lang = window.DashboardI18n ? window.DashboardI18n.getLang() : "vi";
+  const renderKey = JSON.stringify({
+    agentId,
+    lang,
+    preset: envFilterPreset,
+    onlyFail: envFilterOnlyFail,
+    cats: [...activityFilterCategories].sort(),
+    kinds: [...activityFilterKinds].sort(),
+    q: activitySearchQuery,
+    bounds: activitySlotFilterBounds(),
+    total: allRecords.length,
+    shown: records.length,
+    head: records.length ? activityRecordKey(records[0]) : null,
+    tail: records.length ? activityRecordKey(records[records.length - 1]) : null,
+    byCat: summary.by_category || null,
+  });
+  if (renderKey === lastActivityRenderKey) {
+    return;
+  }
+  lastActivityRenderKey = renderKey;
 
   syncActivitySlotFilterUi(data);
   buildActivityCategoryFilters(data);
@@ -1959,9 +2045,18 @@ function updateEnvCalls(data) {
     return;
   }
 
+  let seenKeys = seenActivityKeysByAgent.get(agentId);
+  const firstSeenBatch = !seenKeys;
+  if (!seenKeys) {
+    seenKeys = new Set();
+    seenActivityKeysByAgent.set(agentId, seenKeys);
+  }
+  const scrollWrap = list.parentElement;
+  const prevScrollTop = scrollWrap ? scrollWrap.scrollTop : list.scrollTop;
+
   list.innerHTML = [...records]
     .reverse()
-    .map((r, idx) => {
+    .map((r) => {
       const cat = r.category || "tool";
       const color = activityCategoryColor(data, cat);
       const slot = r.slot != null ? r.slot + 1 : "—";
@@ -1974,8 +2069,11 @@ function updateEnvCalls(data) {
         : (r.summary || "—");
       const status =
         r.ok === false ? _t("activity.statusFail") : r.ok === true ? _t("activity.statusOk") : "—";
+      const recKey = activityRecordKey(r);
+      const isNew = !firstSeenBatch && !seenKeys.has(recKey);
+      seenKeys.add(recKey);
       return `
-    <li class="env-call-item activity-item${r.ok === false ? " failed" : ""}" data-slot="${escapeHtml(r.slot ?? "")}" data-category="${escapeHtml(cat)}" style="animation-delay:${Math.min(idx, 12) * 30}ms">
+    <li class="env-call-item activity-item${r.ok === false ? " failed" : ""}${isNew ? " is-new" : ""}" data-slot="${escapeHtml(r.slot ?? "")}" data-category="${escapeHtml(cat)}">
       <div class="env-call-head">
         <span class="env-fn-tag activity-cat-tag" style="border-color:${color};color:${color}">${escapeHtml(catLabel)}</span>
         <span class="env-fn-tag activity-kind-tag">${escapeHtml(itemLabel)}</span>
@@ -1989,6 +2087,12 @@ function updateEnvCalls(data) {
     </li>`;
     })
     .join("");
+
+  if (scrollWrap) {
+    scrollWrap.scrollTop = prevScrollTop;
+  } else {
+    list.scrollTop = prevScrollTop;
+  }
 
   list.querySelectorAll("li[data-slot]").forEach((li) => {
     const slot = li.dataset.slot;
@@ -2058,10 +2162,155 @@ function toggleSchematicPlay() {
   }, 700);
 }
 
+async function requestViTranslation(text) {
+  const res = await fetch("/api/translate", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ text, target_lang: "vi" }),
+  });
+  let body = {};
+  try {
+    body = await res.json();
+  } catch {
+    /* ignore */
+  }
+  if (!res.ok || !body?.translated) {
+    throw new Error(body?.error || `HTTP ${res.status}`);
+  }
+  return {
+    translated: String(body.translated),
+    cached: Boolean(body.cached),
+    model: body.model || "gpt-5.4-nano",
+  };
+}
+
+function renderLangSwitchHtml(target, currentMode) {
+  return `<div class="inline-lang-toggle" role="group">
+    <button type="button" class="inline-lang-btn${currentMode === "vi" ? " active" : ""}" data-target="${target}" data-lang="vi">${escapeHtml(_t("drawer.viewVi"))}</button>
+    <button type="button" class="inline-lang-btn${currentMode === "en" ? " active" : ""}" data-target="${target}" data-lang="en">${escapeHtml(_t("drawer.viewOriginal"))}</button>
+  </div>`;
+}
+
+function openCostDrawer() {
+  const drawer = $("detail-drawer");
+  const body = $("drawer-body");
+  if (!drawer || !body) return;
+  drawerMode = "cost";
+
+  const eyebrow = drawer.querySelector(".drawer-eyebrow");
+  if (eyebrow) eyebrow.textContent = _t("cost.drawerEyebrow");
+  $("drawer-title").textContent = _t("cost.drawerTitle");
+
+  const llm = state?.llm_stats;
+  if (!llm || !llm.available) {
+    body.innerHTML = `<p class="empty-hint">${escapeHtml(_t("cost.noData"))}</p>`;
+  } else {
+    const totals = llm.totals || {};
+    const totalTok = (totals.input || 0) + (totals.output || 0);
+    const hitPct = ((llm.cache_hit_rate || 0) * 100).toFixed(1);
+    const models = Object.entries(llm.models || {});
+    const agentTotals = llm.agent_side?.totals || {};
+    const routerTotals = llm.router_side?.totals || {};
+    const modelRows = models
+      .map(([name, m]) => {
+        const inputStr = `${Number(m.input || 0).toLocaleString("en-US")} (${Number(m.cached_input || 0).toLocaleString("en-US")})`;
+        const outputStr = Number(m.output || 0).toLocaleString("en-US");
+        const costStr = m.pricing_known
+          ? `${formatUsd(m.cost_usd)}<br/><small>${escapeHtml(formatVnd(m.cost_vnd))}</small>`
+          : "—";
+        return `<tr>
+          <td class="mono">${escapeHtml(name)}</td>
+          <td class="num">${m.calls || 0}</td>
+          <td class="num">${escapeHtml(inputStr)}</td>
+          <td class="num">${escapeHtml(outputStr)}</td>
+          <td class="num">${costStr}</td>
+        </tr>`;
+      })
+      .join("");
+
+    body.innerHTML = `
+      <div class="detail-grid">
+        <div class="detail-card full">
+          <label>${escapeHtml(_t("cost.totalCost"))}</label>
+          <div class="value">${llm.pricing_known ? `${escapeHtml(formatUsd(llm.cost_usd))} · ${escapeHtml(formatVnd(llm.cost_vnd))}` : "—"}</div>
+        </div>
+        <div class="detail-card">
+          <label>${escapeHtml(_t("cost.totalCalls"))}</label>
+          <div class="value mono">${Number(totals.calls || 0).toLocaleString("en-US")}</div>
+        </div>
+        <div class="detail-card">
+          <label>${escapeHtml(_t("cost.totalTokens"))}</label>
+          <div class="value mono">${Number(totalTok).toLocaleString("en-US")}</div>
+        </div>
+        <div class="detail-card">
+          <label>${escapeHtml(_t("cost.inputTokens"))}</label>
+          <div class="value mono">${Number(totals.input || 0).toLocaleString("en-US")}</div>
+        </div>
+        <div class="detail-card">
+          <label>${escapeHtml(_t("cost.cachedTokens"))}</label>
+          <div class="value mono">${Number(totals.cached_input || 0).toLocaleString("en-US")} (${hitPct}%)</div>
+        </div>
+        <div class="detail-card">
+          <label>${escapeHtml(_t("cost.outputTokens"))}</label>
+          <div class="value mono">${Number(totals.output || 0).toLocaleString("en-US")}</div>
+        </div>
+        <div class="detail-card">
+          <label>${escapeHtml(_t("cost.agentSide"))}</label>
+          <div class="value">${escapeHtml(_t("cost.sideDetail", {
+            calls: agentTotals.calls || 0,
+            input: formatCompactTokens(agentTotals.input || 0),
+            output: formatCompactTokens(agentTotals.output || 0),
+          }))}</div>
+        </div>
+        <div class="detail-card full">
+          <label>${escapeHtml(_t("cost.routerSide"))}</label>
+          <div class="value">${escapeHtml(_t("cost.sideDetail", {
+            calls: routerTotals.calls || 0,
+            input: formatCompactTokens(routerTotals.input || 0),
+            output: formatCompactTokens(routerTotals.output || 0),
+          }))}</div>
+        </div>
+      </div>
+      ${llm.pricing_known
+        ? `<div class="cost-savings">${escapeHtml(_t("cost.cacheSaved", {
+          usd: formatUsd(llm.saved_by_cache_usd),
+          vnd: formatVnd(llm.saved_by_cache_vnd),
+          rate: hitPct,
+        }))}</div>`
+        : ""
+      }
+      <div class="q-section">
+        <h3>${escapeHtml(_t("cost.byModel"))}</h3>
+        <table class="cost-table">
+          <thead>
+            <tr>
+              <th>${escapeHtml(_t("cost.colModel"))}</th>
+              <th class="num">${escapeHtml(_t("cost.colCalls"))}</th>
+              <th class="num">${escapeHtml(_t("cost.colInput"))}</th>
+              <th class="num">${escapeHtml(_t("cost.colOutput"))}</th>
+              <th class="num">${escapeHtml(_t("cost.colCost"))}</th>
+            </tr>
+          </thead>
+          <tbody>${modelRows}</tbody>
+        </table>
+      </div>
+      <p class="cost-note">${escapeHtml(_t("cost.disclaimer", { rate: Number(llm.usd_to_vnd || 25500).toLocaleString("vi-VN") }))}</p>
+    `;
+  }
+
+  drawer.classList.remove("hidden");
+  drawer.setAttribute("aria-hidden", "false");
+}
+
 function openDrawer(slot) {
   const drawer = $("detail-drawer");
   const s = (state?.slots || [])[slot];
   if (!drawer || !s) return;
+  drawerMode = "slot";
+  selectedSlot = slot;
+
+  const eyebrow = drawer.querySelector(".drawer-eyebrow");
+  if (eyebrow) eyebrow.textContent = _t("drawer.eyebrow");
 
   $("drawer-title").textContent = _t("drawer.title", {
     slot: slot + 1,
@@ -2100,6 +2349,29 @@ function openDrawer(slot) {
     const rawPosLabel = s.position_label
       ? (window.DashboardI18n ? window.DashboardI18n.locationLabel(s.position_label) : s.position_label)
       : "—";
+
+    const isViDash = (window.DashboardI18n?.getLang() || "vi") === "vi";
+    const translatedPrompt = isViDash && window.DashboardI18n?.translateSurveyPrompt
+      ? window.DashboardI18n.translateSurveyPrompt(prompt)
+      : null;
+    const showViPrompt = Boolean(translatedPrompt && drawerPromptLang === "vi");
+    const promptShown = showViPrompt ? translatedPrompt : prompt;
+
+    const cachedReason = s.reason ? reasonTranslations.get(s.reason) : null;
+    const showViReason = Boolean(isViDash && s.reason && drawerReasonLang === "vi");
+    let reasonBodyHtml = "";
+    if (s.reason) {
+      if (!showViReason) {
+        reasonBodyHtml = `<div id="drawer-reason-text">${escapeHtml(s.reason)}</div>`;
+      } else if (cachedReason) {
+        const badgeKey = cachedReason.cached ? "drawer.translateCached" : "drawer.translateLive";
+        reasonBodyHtml = `<div id="drawer-reason-text">${escapeHtml(cachedReason.translated)}</div>
+          <div class="translate-status" id="drawer-reason-status">${escapeHtml(_t(badgeKey, { model: cachedReason.model }))}</div>`;
+      } else {
+        reasonBodyHtml = `<div class="translate-status" id="drawer-reason-status">${escapeHtml(_t("drawer.translating"))}</div>
+          <div class="reason-fallback" id="drawer-reason-text">${escapeHtml(s.reason)}</div>`;
+      }
+    }
 
     body.innerHTML = `
       ${s.plan
@@ -2181,7 +2453,13 @@ function openDrawer(slot) {
       }
       </div>
       ${s.reason
-        ? `<div class="reason-block"><strong>${escapeHtml(_t("drawer.agentReason"))}</strong><br/>${escapeHtml(s.reason)}</div>`
+        ? `<div class="reason-block">
+            <div class="drawer-section-head">
+              <strong>${escapeHtml(_t("drawer.agentReason"))}</strong>
+              ${isViDash ? renderLangSwitchHtml("reason", drawerReasonLang) : ""}
+            </div>
+            ${reasonBodyHtml}
+          </div>`
         : ""
       }
       ${primary?.raw_response || primary?.raw_text
@@ -2189,7 +2467,13 @@ function openDrawer(slot) {
         : ""
       }
       ${prompt
-        ? `<div class="q-section"><h3>${escapeHtml(_t("drawer.promptExcerpt"))}</h3><div class="q-prompt">${escapeHtml(prompt.slice(0, 1200))}${prompt.length > 1200 ? "…" : ""}</div></div>`
+        ? `<div class="q-section">
+            <div class="drawer-section-head">
+              <h3>${escapeHtml(_t("drawer.promptExcerpt"))}</h3>
+              ${translatedPrompt ? renderLangSwitchHtml("prompt", drawerPromptLang) : ""}
+            </div>
+            <div class="q-prompt">${escapeHtml(promptShown.slice(0, 1400))}${promptShown.length > 1400 ? "…" : ""}</div>
+          </div>`
         : ""
       }
       <details class="raw-json">
@@ -2197,6 +2481,62 @@ function openDrawer(slot) {
         <pre>${escapeHtml(JSON.stringify(q, null, 2))}</pre>
       </details>
     `;
+
+    body.querySelectorAll(".inline-lang-btn").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const target = btn.dataset.target;
+        const lang = btn.dataset.lang;
+        if (target === "reason" && lang !== drawerReasonLang) {
+          drawerReasonLang = lang;
+          openDrawer(slot);
+        } else if (target === "prompt" && lang !== drawerPromptLang) {
+          drawerPromptLang = lang;
+          openDrawer(slot);
+        }
+      });
+    });
+
+    if (showViReason && !cachedReason) {
+      const sourceText = s.reason;
+      requestViTranslation(sourceText)
+        .then((res) => {
+          reasonTranslations.set(sourceText, res);
+          if (
+            drawerMode !== "slot" ||
+            selectedSlot !== slot ||
+            drawerReasonLang !== "vi" ||
+            drawer.classList.contains("hidden")
+          ) {
+            return;
+          }
+          const textEl = $("drawer-reason-text");
+          const statusEl = $("drawer-reason-status");
+          if (textEl) {
+            textEl.textContent = res.translated;
+            textEl.classList.remove("reason-fallback");
+          }
+          if (statusEl) {
+            const badgeKey = res.cached ? "drawer.translateCached" : "drawer.translateLive";
+            statusEl.textContent = _t(badgeKey, { model: res.model });
+            statusEl.classList.remove("error");
+          }
+        })
+        .catch((err) => {
+          if (
+            drawerMode !== "slot" ||
+            selectedSlot !== slot ||
+            drawerReasonLang !== "vi" ||
+            drawer.classList.contains("hidden")
+          ) {
+            return;
+          }
+          const statusEl = $("drawer-reason-status");
+          if (statusEl) {
+            statusEl.textContent = _t("drawer.translateError", { err: err.message });
+            statusEl.classList.add("error");
+          }
+        });
+    }
   }
 
   drawer.classList.remove("hidden");
@@ -2206,6 +2546,7 @@ function openDrawer(slot) {
 function closeDrawer() {
   const drawer = $("detail-drawer");
   if (!drawer) return;
+  drawerMode = null;
   drawer.classList.add("hidden");
   drawer.setAttribute("aria-hidden", "true");
 }
@@ -2343,6 +2684,25 @@ function paintMilestoneConnectors(laid) {
   });
 }
 
+function computeStateFingerprint(data) {
+  if (!data) return "";
+  const meta = data.meta ? { ...data.meta } : {};
+  delete meta.updated_at;
+  return JSON.stringify({
+    lang: window.DashboardI18n ? window.DashboardI18n.getLang() : "vi",
+    meta,
+    timing: data.timing,
+    needs: data.needs,
+    milestones: data.milestones,
+    positions: data.positions,
+    slots: data.slots,
+    schedule: data.schedule,
+    llm_stats: data.llm_stats,
+    records: data.activity_log?.records || [],
+    live: data.live,
+  });
+}
+
 function render(data) {
   state = data;
   syncAgentSelect(data);
@@ -2364,18 +2724,31 @@ function render(data) {
   updateLocationPanel(data);
   updateNeedsChart(data);
   updateEnvCalls(data);
-
-  document.querySelectorAll(".card").forEach((card) => {
-    card.classList.remove("card-refresh");
-    void card.offsetWidth;
-    card.classList.add("card-refresh");
-  });
 }
 
-async function tick() {
+function scheduleNextPoll(data) {
+  if (pollTimer) {
+    clearTimeout(pollTimer);
+    pollTimer = null;
+  }
+  const status = String(data?.timing?.run_status || "").toLowerCase();
+  const isTerminal = status === "completed" || status === "completed_with_errors" || status === "failed";
+  const delay = isTerminal ? IDLE_POLL_MS : POLL_MS;
+  pollTimer = setTimeout(() => tick({ force: false }), delay);
+}
+
+async function tick({ force = false } = {}) {
   try {
     const data = await fetchState();
-    render(data);
+    const fp = computeStateFingerprint(data);
+    if (!force && fp === lastStateFingerprint) {
+      state = data;
+      updateRunStatus(data);
+    } else {
+      lastStateFingerprint = fp;
+      render(data);
+    }
+    scheduleNextPoll(data);
   } catch (err) {
     console.error(err);
     const text = $("status-text");
@@ -2387,12 +2760,15 @@ async function tick() {
         : _t("nav.statusConnectErr", { err: err.message });
     }
     if (dot) dot.classList.toggle("idle", !state);
+    scheduleNextPoll(state);
   }
 }
 
 function applyLanguageChange(nextLang) {
   if (!window.DashboardI18n) return;
   window.DashboardI18n.setLang(nextLang);
+  lastStateFingerprint = null;
+  lastActivityRenderKey = null;
   if (needsChart) {
     needsChart.data.datasets[0].label = _t("needs.hunger");
     needsChart.data.datasets[1].label = _t("needs.energy");
@@ -2406,8 +2782,12 @@ function applyLanguageChange(nextLang) {
   if (state) {
     render(state);
     const drawer = $("detail-drawer");
-    if (drawer && !drawer.classList.contains("hidden") && selectedSlot != null) {
-      openDrawer(selectedSlot);
+    if (drawer && !drawer.classList.contains("hidden")) {
+      if (drawerMode === "cost") {
+        openCostDrawer();
+      } else if (drawerMode === "slot" && selectedSlot != null) {
+        openDrawer(selectedSlot);
+      }
     }
   }
 }
@@ -2416,6 +2796,21 @@ function bindUi() {
   $("lang-select")?.addEventListener("change", (e) => {
     applyLanguageChange(e.target.value);
   });
+
+  $("manual-refresh-btn")?.addEventListener("click", () => {
+    tick({ force: true });
+  });
+
+  const costCard = $("kpi-cost-card");
+  if (costCard) {
+    costCard.addEventListener("click", () => openCostDrawer());
+    costCard.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        openCostDrawer();
+      }
+    });
+  }
 
   $("drawer-close")?.addEventListener("click", closeDrawer);
   $("drawer-backdrop")?.addEventListener("click", closeDrawer);
@@ -2432,9 +2827,11 @@ function bindUi() {
     schematicEndSlot = null;
     schematicFollowLive = true;
     lastSlotsDone = -1;
+    lastStateFingerprint = null;
+    lastActivityRenderKey = null;
     stopSchematicPlay();
     closeDrawer();
-    tick();
+    tick({ force: true });
   });
 
   $("schematic-play")?.addEventListener("click", toggleSchematicPlay);
@@ -2494,8 +2891,7 @@ function start() {
   window.GeoMapView?.setSelectHandler((slot) => selectSlot(slot));
   setMapView(mapViewMode);
   bindUi();
-  tick();
-  pollTimer = setInterval(tick, POLL_MS);
+  tick({ force: true });
   let resizeTimer = null;
   window.addEventListener("resize", () => {
     clearTimeout(resizeTimer);
