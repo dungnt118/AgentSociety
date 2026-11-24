@@ -1,0 +1,8 @@
+# Minimal context for frontend + nginx template only.
+*
+!frontend/
+frontend/node_modules/
+frontend/dist/
+!docker/
+docker/*
+!docker/nginx.conf.template

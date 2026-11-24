@@ -9,6 +9,8 @@
   const COMMUTE_COLOR = "#2980b9";
 
   let map = null;
+  let layerControl = null;
+  let baseLayers = null;
   let layerTrail = null;
   let layerMarkers = null;
   let layerClusters = null;
@@ -16,16 +18,21 @@
   let layerTargets = null;
   let onSelectSlot = null;
 
+  function _t(key, vars) {
+    return global.DashboardI18n ? global.DashboardI18n.t(key, vars) : key;
+  }
+
   function gaodeTileLayer(style) {
+    const lang = global.DashboardI18n?.getLang() === "zh" ? "zh_cn" : "en";
     return L.tileLayer(
-      "https://webrd0{s}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style={style}&x={x}&y={y}&z={z}".replace(
+      `https://webrd0{s}.is.autonavi.com/appmaptile?lang=${lang}&size=1&scale=1&style={style}&x={x}&y={y}&z={z}`.replace(
         "{style}",
         String(style),
       ),
       {
         subdomains: ["1", "2", "3", "4"],
         maxZoom: 18,
-        attribution: "© 高德地图",
+        attribution: "© Gaode Maps",
       },
     );
   }
@@ -81,8 +88,8 @@
 
   function targetLabel(targetId, homeAoi, workAoi) {
     if (targetId == null) return null;
-    if (homeAoi != null && targetId === homeAoi) return "家";
-    if (workAoi != null && targetId === workAoi) return "单位";
+    if (homeAoi != null && targetId === homeAoi) return _t("map.homeShort");
+    if (workAoi != null && targetId === workAoi) return _t("map.workShort");
     return `AOI ${targetId}`;
   }
 
@@ -195,6 +202,21 @@
     return spreadOverlappingGeoPoints(pts);
   }
 
+  function rebuildLayerControl() {
+    if (!map || !baseLayers) return;
+    if (layerControl) {
+      map.removeControl(layerControl);
+    }
+    const overlayMap = {
+      [_t("map.geoLayerStd")]: baseLayers.gaodeStd,
+      [_t("map.geoLayerSat")]: baseLayers.gaodeSat,
+      [_t("map.geoLayerOsm")]: baseLayers.osm,
+    };
+    layerControl = L.control
+      .layers(overlayMap, {}, { position: "topright", collapsed: true })
+      .addTo(map);
+  }
+
   function ensureMap() {
     if (map) return map;
     const el = document.getElementById("geo-map");
@@ -212,14 +234,9 @@
       attribution: "© OpenStreetMap",
     });
 
+    baseLayers = { gaodeStd, gaodeSat, osm };
     gaodeStd.addTo(map);
-    L.control
-      .layers(
-        { 高德标准: gaodeStd, 高德影像: gaodeSat, OpenStreetMap: osm },
-        {},
-        { position: "topright", collapsed: true },
-      )
-      .addTo(map);
+    rebuildLayerControl();
 
     layerLandmarks = L.layerGroup().addTo(map);
     layerTargets = L.layerGroup().addTo(map);
@@ -237,13 +254,21 @@
     const dest = targetLabel(p.target_aoi_id, p.home_aoi, p.work_aoi);
     const cluster =
       (p._clusterSize || 1) > 1
-        ? `<br/><small>同地 ${p._clusterSize} 时段 · 展开 #${(p._clusterIndex ?? 0) + 1}</small>`
+        ? `<br/><small>${_t("map.geoClusterTooltip", { n: p._clusterSize, idx: (p._clusterIndex ?? 0) + 1 })}</small>`
         : "";
     const moveLine = moving
-      ? `<br/><small style="color:${COMMUTE_COLOR}">${dest ? `通勤 → ${dest}` : "通勤途中"} · status=${p.status || "moving"}</small>`
+      ? `<br/><small style="color:${COMMUTE_COLOR}">${dest ? _t("map.movingTo", { dest }) : _t("map.moving")} · status=${p.status || "moving"}</small>`
       : "";
-    return `<strong>时段 ${p.slot + 1}</strong> · ${p.time_label || ""}<br/>
-      意图：${intent}<br/>位置：${pos}${p.poi_name ? ` · ${p.poi_name}` : ""}${moveLine}${cluster}`;
+    const poi = p.poi_name ? ` · ${p.poi_name}` : "";
+    return _t("map.geoPopup", {
+      slot: p.slot + 1,
+      time: p.time_label || "",
+      intent,
+      pos,
+      poi,
+      move: moveLine,
+      cluster,
+    });
   }
 
   function renderLandmarks(data) {
@@ -263,15 +288,15 @@
         icon: L.divIcon({
           className: "geo-landmark",
           html: `<span class="geo-landmark-inner geo-landmark-${kind}">${label}</span>`,
-          iconSize: [36, 20],
-          iconAnchor: [18, 10],
+          iconSize: [72, 20],
+          iconAnchor: [36, 10],
         }),
         interactive: false,
         zIndexOffset: -100,
       }).addTo(layerLandmarks);
     };
-    addLm(homeSlots, "家", "home");
-    addLm(workSlots, "单位", "work");
+    addLm(homeSlots, _t("map.homeShort"), "home");
+    addLm(workSlots, _t("map.workShort"), "work");
     return { homeSlots, workSlots };
   }
 
@@ -309,7 +334,7 @@
       weight: 2,
       fillOpacity: 0.9,
     })
-      .bindTooltip(caption ? `目的地：${caption}` : "目的地", { permanent: false })
+      .bindTooltip(caption ? _t("map.dest", { dest: caption }) : _t("map.destGeneric"), { permanent: false })
       .addTo(layerTargets);
   }
 
@@ -344,7 +369,7 @@
 
   function render(ctx) {
     const m = ensureMap();
-    if (!m) return { pointCount: 0, message: "地图库未加载" };
+    if (!m) return { pointCount: 0, message: _t("map.noLib") };
 
     const { data, endSlot, selectedSlot, latestSlot, intentionColor, positionColor, labels } =
       ctx;
@@ -360,7 +385,7 @@
       m.setView(BEIJING_CENTER, 11);
       return {
         pointCount: 0,
-        message: "暂无经纬度数据（需问卷快照含坐标；无坐标时段仅在示意图显示）",
+        message: _t("map.noGeoCoordsDetail"),
       };
     }
 
@@ -493,5 +518,6 @@
     invalidateSize,
     setSelectHandler,
     buildGeoPoints,
+    refreshLanguage: rebuildLayerControl,
   };
 })(window);

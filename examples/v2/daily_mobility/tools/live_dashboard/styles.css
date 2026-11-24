@@ -45,7 +45,7 @@
   --shadow-inner: inset 0 2px 4px rgba(15, 23, 42, 0.04);
 
   /* Typography */
-  --font: "Inter", "Noto Sans SC", system-ui, -apple-system, sans-serif;
+  --font: "Inter", "Noto Sans", "Noto Sans SC", system-ui, -apple-system, sans-serif;
   --mono: "JetBrains Mono", "Cascadia Code", "Consolas", monospace;
 
   /* Spacing */

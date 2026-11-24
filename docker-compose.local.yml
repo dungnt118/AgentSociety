@@ -1,0 +1,82 @@
+services:
+  backend:
+    image: agentsociety2-runtime:local
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.runtime
+    env_file:
+      - .env
+    shm_size: "2gb"
+    volumes:
+      - agentsociety_workspace:/workspace
+      - agentsociety_data:/data/agentsociety_data
+    command: >
+      sh -c 'if [ ! -d /workspace/.agentsociety ]; then
+      python -m agentsociety2.society.workspace init --target-dir /workspace --skip-map;
+      fi && exec python -m agentsociety2.backend.run'
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "curl -fsS -H \"Authorization: Bearer $$BACKEND_TOKEN\" http://127.0.0.1:8001/health || exit 1",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+    restart: unless-stopped
+
+  gateway:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.frontend
+    env_file:
+      - .env
+    environment:
+      NGINX_ENVSUBST_FILTER: BACKEND_TOKEN
+    ports:
+      - "127.0.0.1:8001:8001"
+      - "127.0.0.1:5173:5173"
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+
+  mobility-dashboard:
+    image: agentsociety2-runtime:local
+    pull_policy: never
+    env_file:
+      - .env
+    volumes:
+      - agentsociety_workspace:/workspace
+      - agentsociety_data:/data/agentsociety_data
+    command: >
+      sh -c 'mkdir -p /workspace/hypothesis_1/experiment_1/run &&
+      exec python /app/examples/v2/daily_mobility/tools/serve_live_dashboard.py
+      --run-dir /workspace/hypothesis_1/experiment_1/run
+      --log-file /workspace/hypothesis_1/experiment_1/run/output.log
+      --agent-id 1
+      --host 0.0.0.0
+      --port 8765'
+    ports:
+      - "127.0.0.1:8765:8765"
+    depends_on:
+      backend:
+        condition: service_started
+    restart: unless-stopped
+
+  sim-runner:
+    image: agentsociety2-runtime:local
+    pull_policy: never
+    env_file:
+      - .env
+    shm_size: "2gb"
+    volumes:
+      - agentsociety_workspace:/workspace
+      - agentsociety_data:/data/agentsociety_data
+    command: ["bash", "/app/docker/run_scenarios.sh"]
+    restart: "no"
+
+volumes:
+  agentsociety_workspace:
+  agentsociety_data:

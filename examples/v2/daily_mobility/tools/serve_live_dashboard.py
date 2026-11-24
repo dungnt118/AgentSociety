@@ -20,7 +20,7 @@ from daily_mobility.tools.live_data import build_dashboard_payload
 STATIC_DIR = TOOLS_DIR / "live_dashboard"
 STATIC_ROUTES = {
     "/" + name: STATIC_DIR / name
-    for name in ("index.html", "styles.css", "app.js", "geo_map.js")
+    for name in ("index.html", "styles.css", "i18n.js", "app.js", "geo_map.js")
 }
 STATIC_ROUTES["/"] = STATIC_ROUTES["/index.html"]
 

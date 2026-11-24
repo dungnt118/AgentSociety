@@ -6,6 +6,7 @@ import RootLayout from './Layout'
 import Home from './pages/Home'
 import zhCN from 'antd/locale/zh_CN'
 import enUS from 'antd/locale/en_US'
+import viVN from 'antd/locale/vi_VN'
 import Callback from './pages/Callback'
 import { AuthProvider } from './components/Auth'
 import { sdkConfig } from './components/authState'
@@ -199,11 +200,13 @@ const theme: ThemeConfig = {
 
 const App = () => {
     const { i18n } = useTranslation()
+    const currentLang = (i18n.resolvedLanguage || i18n.language || 'vi').split('-')[0]
+    const antdLocale = currentLang === 'en' ? enUS : currentLang === 'zh' ? zhCN : viVN
 
     return (
         <ConfigProvider
             theme={theme}
-            locale={i18n.language === 'en' ? enUS : zhCN}
+            locale={antdLocale}
         >
             <RouterProvider router={router} />
         </ConfigProvider>

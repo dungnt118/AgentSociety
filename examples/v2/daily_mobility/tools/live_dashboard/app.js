@@ -1,25 +1,12 @@
-/* Daily Mobility Benchmark — 实时看板 */
+/* Daily Mobility Benchmark — Live Dashboard */
 
 const POLL_MS = 2500;
-
-const INTENTION_LABELS = {
-  sleep: "睡眠",
-  "home activity": "居家",
-  work: "工作",
-  shopping: "购物",
-  "eating out": "外出就餐",
-  "leisure and entertainment": "休闲",
-  other: "其他",
-  commute: "通勤",
-};
-
-const SCHEDULE_ACTIVITY_LABELS = {
-  sleep: "睡眠",
-  home_activity: "居家",
-  work: "工作/通勤",
-  meal: "用餐",
-  return_home: "回家",
-};
+const _t = (key, vars) => (window.DashboardI18n ? window.DashboardI18n.t(key, vars) : key);
+const getIntentionLabel = (k) => (window.DashboardI18n ? window.DashboardI18n.intentionLabel(k) : k || "—");
+const getScheduleActivityLabel = (k) => (window.DashboardI18n ? window.DashboardI18n.scheduleActivityLabel(k) : k || "—");
+const getPositionKindLabel = (k) => (window.DashboardI18n ? window.DashboardI18n.positionKindLabel(k) : k || "—");
+const getPositionKindLegend = (k) => (window.DashboardI18n ? window.DashboardI18n.positionKindLegend(k) : k || "");
+const getPositionKindIcon = (k) => (window.DashboardI18n ? window.DashboardI18n.positionKindIcon(k) : { emoji: "📍", label: k || "" });
 
 const INTENTION_ORDER = [
   "sleep",
@@ -35,33 +22,6 @@ const INTENTION_ORDER = [
 const POSITION_KIND_ORDER = ["home", "work", "moving", "meal_poi", "aoi", "unset"];
 
 const COMMUTE_COLOR = "#2980b9";
-
-const POSITION_KIND_LABELS = {
-  home: "在家",
-  work: "在工作点",
-  moving: "通勤途中",
-  meal_poi: "就餐地点",
-  aoi: "其他 AOI",
-  unset: "未知",
-};
-
-const POSITION_KIND_LEGEND = {
-  home: "AOI 匹配档案 home",
-  work: "AOI 匹配档案 work",
-  moving: "status = moving，途中无固定 AOI",
-  meal_poi: "餐厅 / 餐饮 POI",
-  aoi: "有 AOI，未匹配 home/work",
-  unset: "无 AOI（如起程未落点）",
-};
-
-const POSITION_KIND_ICONS = {
-  home: { emoji: "🏠", label: "在家" },
-  work: { emoji: "🏢", label: "在单位" },
-  moving: { emoji: "🚶", label: "通勤途中" },
-  meal_poi: { emoji: "🍽", label: "就餐地点" },
-  aoi: { emoji: "📍", label: "在外部地点" },
-  unset: { emoji: "❓", label: "位置未知" },
-};
 
 const POSITION_KIND_ANCHORS = {
   home: { x: 70, y: 190 },
@@ -202,10 +162,11 @@ const milestoneLinesPlugin = {
       ctx.stroke();
       ctx.setLineDash([]);
       ctx.fillStyle = m.color || "#d97706";
-      ctx.font = '600 10px "Noto Sans SC", system-ui, sans-serif';
+      ctx.font = '600 10px "Noto Sans", "Noto Sans SC", system-ui, sans-serif';
       ctx.textAlign = "center";
       ctx.textBaseline = "bottom";
-      const label = `${m.icon || ""}${m.label || ""}`.trim();
+      const rawLabel = window.DashboardI18n ? window.DashboardI18n.milestoneLabel(m.label || "") : (m.label || "");
+      const label = `${m.icon || ""}${rawLabel}`.trim();
       if (label) {
         ctx.fillText(label, x, chartArea.top - 4 - lane * MILESTONE_LANE_STEP_PX);
       }
@@ -261,8 +222,8 @@ function setMapView(mode) {
   if (desc) {
     desc.textContent =
       mapViewMode === "geo"
-        ? "北京地图 · 蓝色虚线=通勤 · 高德/OSM 底图"
-        : "示意图 · 蓝色虚线=通勤/路程中 · 同地环形展开";
+        ? _t("map.descGeo")
+        : _t("map.descSchematic");
   }
 
   if (mapViewMode === "geo") {
@@ -288,8 +249,8 @@ function updateGeoMapView(data) {
     positionColor: (kind) => positionColor(posColors, kind),
     intentionColor: (intent) => intentionColor(intentColors, intent),
     labels: {
-      intention: INTENTION_LABELS,
-      position: POSITION_KIND_LABELS,
+      intention: window.DashboardI18n ? window.DashboardI18n.intentionLabelsMap() : {},
+      position: window.DashboardI18n ? window.DashboardI18n.positionLabelsMap() : {},
     },
   });
 
@@ -297,19 +258,25 @@ function updateGeoMapView(data) {
   if (!status || mapViewMode !== "geo") return;
   status.classList.remove("mismatch");
   if (result.pointCount === 0) {
-    status.textContent = result.message || "暂无地图坐标";
+    status.textContent = result.message || _t("map.noGeoCoords");
     return;
   }
   const cur = (data.slots || [])[endSlot];
   if (!cur) {
-    status.textContent = `地图 · 已显示 ${result.pointCount} 个有时段坐标`;
+    status.textContent = _t("map.geoCount", { count: result.pointCount });
     return;
   }
-  const intentTxt = INTENTION_LABELS[cur.intention] || cur.intention || "—";
+  const intentTxt = getIntentionLabel(cur.intention);
   const locTxt = formatMobilityLabel(cur, data.live);
   const coordTxt =
     cur.lat != null ? ` · ${Number(cur.lat).toFixed(5)}, ${Number(cur.lng).toFixed(5)}` : "";
-  status.textContent = `地图 · 时段 ${endSlot + 1}（${cur.time_label}）· ${intentTxt} · ${locTxt}${coordTxt}`;
+  status.textContent = _t("map.geoStatus", {
+    slot: endSlot + 1,
+    time: cur.time_label,
+    intent: intentTxt,
+    loc: locTxt,
+    coord: coordTxt,
+  });
 }
 
 function storeEnvFilterPreset(preset) {
@@ -341,9 +308,10 @@ function isCommuteSegment(prev, cur) {
 }
 
 function targetAoiLabel(targetId, homeAoi, workAoi) {
+  if (window.DashboardI18n) return window.DashboardI18n.targetLabel(targetId, homeAoi, workAoi);
   if (targetId == null) return null;
-  if (homeAoi != null && targetId === homeAoi) return "家";
-  if (workAoi != null && targetId === workAoi) return "单位";
+  if (homeAoi != null && targetId === homeAoi) return _t("map.homeShort");
+  if (workAoi != null && targetId === workAoi) return _t("map.workShort");
   return `AOI ${targetId}`;
 }
 
@@ -357,20 +325,22 @@ function formatMobilityLabel(slot, live) {
 
   if (status === "moving" || kind === "moving") {
     const dest = targetAoiLabel(targetId, homeAoi, workAoi);
-    return dest ? `通勤途中 → ${dest}` : "通勤途中";
+    return dest ? _t("map.movingTo", { dest }) : _t("map.moving");
   }
 
-  if (live?.location_label && live.location_label !== "—") return live.location_label;
+  if (live?.location_label && live.location_label !== "—") {
+    return window.DashboardI18n ? window.DashboardI18n.locationLabel(live.location_label) : live.location_label;
+  }
   return humanLocationLabel(slot, live);
 }
 
 function humanLocationLabel(slot, live) {
   if (!slot) return "—";
-  const base = POSITION_KIND_LABELS[slot.position_kind] || slot.position_kind || "—";
+  const base = getPositionKindLabel(slot.position_kind);
   if (slot.poi_name) return `${base} · ${slot.poi_name}`;
   if (slot.position_label && !/^moving · aoi=/.test(slot.position_label)) {
     if (!/aoi=\d{6,}/.test(slot.position_label) || slot.position_kind === "meal_poi") {
-      return slot.position_label;
+      return window.DashboardI18n ? window.DashboardI18n.locationLabel(slot.position_label) : slot.position_label;
     }
   }
   return base;
@@ -421,7 +391,8 @@ function escapeHtml(s) {
 function formatUpdated(iso) {
   if (!iso) return "—";
   try {
-    return new Date(iso).toLocaleTimeString("zh-CN", { hour12: false });
+    const locale = window.DashboardI18n ? window.DashboardI18n.timeLocale() : "vi-VN";
+    return new Date(iso).toLocaleTimeString(locale, { hour12: false });
   } catch {
     return iso;
   }
@@ -511,7 +482,7 @@ function syncAgentSelect(data) {
   selectedAgentId = current;
   storeAgentId(current);
   select.innerHTML = agents
-    .map((id) => `<option value="${id}">智能体 ${id}</option>`)
+    .map((id) => `<option value="${id}">${escapeHtml(_t("nav.agentOption", { id }))}</option>`)
     .join("");
   select.value = String(current);
   select.disabled = agents.length <= 1;
@@ -525,9 +496,10 @@ function updateRunStatus(data) {
   if (dot) dot.classList.toggle("idle", complete);
   if (text) {
     const aid = data.meta?.agent_id ?? selectedAgentId;
+    const time = formatUpdated(data.meta?.updated_at);
     text.textContent = complete
-      ? `智能体 ${aid} · 已完成 · ${formatUpdated(data.meta?.updated_at)}`
-      : `智能体 ${aid} · 运行中 · ${formatUpdated(data.meta?.updated_at)}`;
+      ? _t("nav.statusDone", { id: aid, time })
+      : _t("nav.statusRunning", { id: aid, time });
   }
 }
 
@@ -537,7 +509,9 @@ function countRecordedMeals(data) {
   if (windows && typeof windows === "object") return Object.keys(windows).length;
   let n = 0;
   (data.milestones || []).forEach((m) => {
-    if (/餐|早饭|午饭|晚饭|早餐|午餐|晚餐/.test(m.label || "")) n += 1;
+    if (m.kind === "meal" || /餐|早饭|午饭|晚饭|早餐|午餐|晚餐|breakfast|lunch|dinner|bữa/i.test(m.label || "")) {
+      n += 1;
+    }
   });
   return n;
 }
@@ -562,8 +536,9 @@ function updateKpiCards(data) {
   }
   const stepEl = $("kpi-step");
   if (stepEl) {
-    const steps = t.step_count != null ? `引擎步 #${t.step_count}` : "引擎步 —";
-    const status = t.run_status ? ` · ${t.run_status}` : "";
+    const steps = t.step_count != null ? _t("kpi.stepPrefix", { step: t.step_count }) : _t("kpi.stepEmpty");
+    const translatedStatus = t.run_status && window.DashboardI18n ? window.DashboardI18n.runStatusLabel(t.run_status) : t.run_status;
+    const status = translatedStatus ? ` · ${translatedStatus}` : "";
     stepEl.textContent = `${steps}${status}`;
   }
 
@@ -580,14 +555,14 @@ function updateKpiCards(data) {
   const mealsEl = $("kpi-meals");
   if (mealsEl) {
     const n = countRecordedMeals(data);
-    mealsEl.textContent = `已记餐 ${n} 次`;
+    mealsEl.textContent = _t("kpi.mealsRecorded", { count: n });
   }
 
   const envEl = $("kpi-env");
   if (envEl) animateNumber(envEl, allRecords.length, (v) => String(Math.round(v)));
   const envFailEl = $("kpi-env-fail");
   if (envFailEl) {
-    envFailEl.textContent = `失败 ${failCount} 次`;
+    envFailEl.textContent = _t("kpi.activityFail", { count: failCount });
     envFailEl.classList.toggle("kpi-danger", failCount > 0);
   }
 
@@ -600,7 +575,7 @@ function updateKpiCards(data) {
 function renderLegendChips(container, chips) {
   if (!container) return;
   if (!chips.length) {
-    container.innerHTML = '<span class="legend-empty">暂无数据</span>';
+    container.innerHTML = `<span class="legend-empty">${escapeHtml(_t("legend.empty"))}</span>`;
     return;
   }
   container.innerHTML = chips
@@ -623,7 +598,7 @@ function collectIntentionLegendItems(data) {
   Object.keys(data.intent_mix || {}).forEach((k) => used.add(k));
   return INTENTION_ORDER.filter((k) => used.has(k)).map((k) => ({
     color: intentionColor(colors, k),
-    label: INTENTION_LABELS[k] || k,
+    label: getIntentionLabel(k),
     title: k,
   }));
 }
@@ -632,9 +607,9 @@ function collectPositionLegendItems(data) {
   const colors = data.position_kind_colors || data.location_colors || {};
   return POSITION_KIND_ORDER.map((k) => ({
     color: positionColor(colors, k),
-    label: POSITION_KIND_LABELS[k] || k,
-    title: POSITION_KIND_LEGEND[k] || k,
-    iconEmoji: POSITION_KIND_ICONS[k]?.emoji,
+    label: getPositionKindLabel(k),
+    title: getPositionKindLegend(k),
+    iconEmoji: getPositionKindIcon(k).emoji,
   }));
 }
 
@@ -642,8 +617,8 @@ function renderTimelineLegends(data) {
   const intent = collectIntentionLegendItems(data);
   const pos = collectPositionLegendItems(data);
   const combined = [
-    ...intent.map((c) => ({ ...c, group: "意图" })),
-    ...pos.map((c) => ({ ...c, group: "位置" })),
+    ...intent.map((c) => ({ ...c, group: _t("timeline.groupIntent") })),
+    ...pos.map((c) => ({ ...c, group: _t("timeline.groupPos") })),
   ];
   renderLegendChips($("timeline-legend-inline"), combined);
 }
@@ -791,15 +766,22 @@ function spreadOverlappingSchematicPoints(points) {
 
 function formatClusterRange(batch) {
   const slots = batch.map((p) => p.slot + 1).sort((a, b) => a - b);
-  if (slots.length <= 4) return `时段 ${slots.join("、")}`;
-  return `时段 ${slots[0]}–${slots[slots.length - 1]}（共 ${slots.length}）`;
+  if (slots.length <= 4) return _t("map.clusterRangeShort", { slots: slots.join(", ") });
+  return _t("map.clusterRangeLong", {
+    first: slots[0],
+    last: slots[slots.length - 1],
+    count: slots.length,
+  });
 }
 
 function clusterMismatchHint(batch) {
   const mism = batch.filter((p) => isIntentPositionMismatch(p.intention, p.position_kind));
   if (!mism.length) return "";
-  const intents = [...new Set(mism.map((p) => INTENTION_LABELS[p.intention] || p.intention))];
-  return ` · ⚠ ${mism.length} 格意图与位置不符（如意图=${intents.slice(0, 2).join("/")}）`;
+  const intents = [...new Set(mism.map((p) => getIntentionLabel(p.intention)))];
+  return _t("map.clusterMismatch", {
+    n: mism.length,
+    intents: intents.slice(0, 2).join("/"),
+  });
 }
 
 function applyLiveToSchematicPoints(pts, data) {
@@ -956,7 +938,7 @@ function drawLandmark(anchorsG, x, y, kind, caption, posColors) {
     "text-anchor": "middle",
     "font-size": 16,
   });
-  icon.textContent = POSITION_KIND_ICONS[kind]?.emoji || "📍";
+  icon.textContent = getPositionKindIcon(kind).emoji || "📍";
   g.appendChild(icon);
   const cap = svgEl("text", {
     x,
@@ -965,7 +947,7 @@ function drawLandmark(anchorsG, x, y, kind, caption, posColors) {
     fill: positionColor(posColors, kind),
     "font-size": 11,
     "font-weight": 600,
-    "font-family": '"Noto Sans SC", sans-serif',
+    "font-family": '"Noto Sans", "Noto Sans SC", sans-serif',
   });
   cap.textContent = caption;
   g.appendChild(cap);
@@ -996,11 +978,11 @@ function syncSchematicControls(data) {
     slider.value = String(end);
   }
   const label = $("schematic-slider-label");
-  if (label) label.textContent = `时段 ${end + 1} / ${progressEnd + 1}`;
+  if (label) label.textContent = _t("map.slotProgress", { cur: end + 1, total: progressEnd + 1 });
   const follow = $("schematic-follow-live");
   if (follow) follow.checked = schematicFollowLive;
   const playBtn = $("schematic-play");
-  if (playBtn) playBtn.textContent = schematicPlaying ? "⏸ 暂停" : "▶ 播放";
+  if (playBtn) playBtn.textContent = schematicPlaying ? _t("map.pause") : _t("map.play");
 }
 
 function drawCommuteTargetHints(trailG, points, homeLm, workLm, latestSlot, selectedSlot) {
@@ -1053,7 +1035,7 @@ function drawCommuteTargetHints(trailG, points, homeLm, workLm, latestSlot, sele
       fill: COMMUTE_COLOR,
       "font-size": 9,
       "font-weight": 600,
-      "font-family": '"Noto Sans SC", sans-serif',
+      "font-family": '"Noto Sans", "Noto Sans SC", sans-serif',
     });
     cap.textContent = `→ ${caption}`;
     trailG.appendChild(cap);
@@ -1109,17 +1091,21 @@ function drawClusterRings(points, clusterG, posColors) {
       fill: "#64748b",
       "font-size": 9,
       "font-weight": 600,
-      "font-family": '"Noto Sans SC", sans-serif',
+      "font-family": '"Noto Sans", "Noto Sans SC", sans-serif',
       class: "cluster-label",
     });
-    cap.textContent = `同地 ${n} 时段 · ${formatClusterRange(batch)}${clusterMismatchHint(batch)}`;
+    cap.textContent = _t("map.clusterCaption", {
+      n,
+      range: formatClusterRange(batch),
+      hint: clusterMismatchHint(batch),
+    });
     clusterG.appendChild(cap);
 
     const title = document.createElementNS("http://www.w3.org/2000/svg", "title");
     title.textContent = batch
       .map(
         (p) =>
-          `#${p.slot + 1} ${p.time_label} · ${INTENTION_LABELS[p.intention] || p.intention || "—"}`,
+          `#${p.slot + 1} ${p.time_label} · ${getIntentionLabel(p.intention)}`,
       )
       .join("\n");
     clusterG.appendChild(title);
@@ -1127,7 +1113,12 @@ function drawClusterRings(points, clusterG, posColors) {
 }
 
 function milestoneMarkerTitle(m) {
-  return `时段 ${m.slot + 1} · ${m.label}${m.kind ? ` (${m.kind})` : ""}`;
+  const mLabel = window.DashboardI18n ? window.DashboardI18n.milestoneLabel(m.label) : m.label;
+  return _t("timeline.milestoneClick", {
+    slot: m.slot + 1,
+    label: mLabel,
+    kind: m.kind ? ` (${m.kind})` : "",
+  });
 }
 
 function appendTrailSegment(trailG, prev, cur, stroke, intentColors, segIndex = 0) {
@@ -1186,7 +1177,7 @@ function appendTrailSegment(trailG, prev, cur, stroke, intentColors, segIndex = 
     "font-family": '"JetBrains Mono", monospace',
   });
   let label = `${prev.slot + 1}→${cur.slot + 1}`;
-  if (commute) label += " 通勤";
+  if (commute) label += ` ${_t("map.commuteLabel")}`;
   if (prev.lat != null && cur.lat != null && prev.lng != null && cur.lng != null) {
     const m = haversineMeters(prev.lat, prev.lng, cur.lat, cur.lng);
     if (m >= 80) label += ` · ${formatDistanceM(m)}`;
@@ -1220,9 +1211,9 @@ function updateSchematic(data) {
   const landmarks = allPoints._landmarks;
   const homeLm = landmarks?.home || POSITION_KIND_ANCHORS.home;
   const workLm = landmarks?.work || POSITION_KIND_ANCHORS.work;
-  drawLandmark(anchorsG, homeLm.x, homeLm.y, "home", "家", posColors);
+  drawLandmark(anchorsG, homeLm.x, homeLm.y, "home", _t("map.homeShort"), posColors);
   if (landmarks?.work || (data.slots || []).some((s) => s.position_kind === "work")) {
-    drawLandmark(anchorsG, workLm.x, workLm.y, "work", "单位", posColors);
+    drawLandmark(anchorsG, workLm.x, workLm.y, "work", _t("map.workShort"), posColors);
   }
 
   if (clusterG) drawClusterRings(points, clusterG, posColors);
@@ -1245,7 +1236,7 @@ function updateSchematic(data) {
   });
 
   sortedPoints.forEach((p) => {
-    const icon = POSITION_KIND_ICONS[p.position_kind] || POSITION_KIND_ICONS.aoi;
+    const icon = getPositionKindIcon(p.position_kind || "aoi");
     const isSelected = selectedSlot === p.slot;
     const isLatest = latestSlot === p.slot;
     const inCluster = (p._clusterSize || 1) > 1;
@@ -1296,13 +1287,20 @@ function updateSchematic(data) {
     g.appendChild(order);
 
     const title = document.createElementNS("http://www.w3.org/2000/svg", "title");
-    const intentTxt = INTENTION_LABELS[p.intention] || p.intention || "—";
-    const locTxt = POSITION_KIND_LABELS[p.position_kind] || icon.label;
+    const intentTxt = getIntentionLabel(p.intention);
+    const locTxt = getPositionKindLabel(p.position_kind) || icon.label;
     const clusterHint =
       inCluster && p._clusterSize > 1
-        ? `\n同地驻留：${p._clusterSize} 个时段（环形展开 #${p._clusterIndex + 1}）`
+        ? `\n${_t("map.clusterTooltip", { n: p._clusterSize, idx: p._clusterIndex + 1 })}`
         : "";
-    title.textContent = `时段 #${p.slot + 1} · ${p.time_label}\n意图：${intentTxt}\n位置：${locTxt}${p.poi_name ? ` · ${p.poi_name}` : ""}${clusterHint}`;
+    title.textContent = _t("map.tipSlot", {
+      slot: p.slot + 1,
+      time: p.time_label,
+      intent: intentTxt,
+      loc: locTxt,
+      poi: p.poi_name ? ` · ${p.poi_name}` : "",
+      cluster: clusterHint,
+    });
     g.appendChild(title);
     g.addEventListener("click", () => selectSlot(p.slot));
     nodesG.appendChild(g);
@@ -1312,25 +1310,32 @@ function updateSchematic(data) {
   if (!status) return;
   status.classList.remove("mismatch");
   if (!points.length) {
-    status.textContent = "等待问卷与位置数据…";
+    status.textContent = _t("map.waitingDetail");
   } else {
     const cur = points[points.length - 1];
     const slotRec = (data.slots || [])[cur.slot] || cur;
-    const intentTxt = INTENTION_LABELS[cur.intention] || cur.intention || "—";
+    const intentTxt = getIntentionLabel(cur.intention);
     let locTxt = formatMobilityLabel(slotRec, data.live);
     const hunger = data.live?.needs?.hunger ?? slotRec.needs?.hunger;
-    const hungerTxt = hunger != null ? ` · 饥饿 ${(Number(hunger) * 100).toFixed(0)}%` : "";
+    const hungerTxt = hunger != null ? _t("map.hungerInline", { pct: (Number(hunger) * 100).toFixed(0) }) : "";
     const mismatch =
       isIntentPositionMismatch(slotRec.intention, slotRec.position_kind);
     if (mismatch && selectedSlot === cur.slot) {
       status.classList.add("mismatch");
-      locTxt += "（位置快照与问卷意图可能不一致）";
+      locTxt += _t("map.mismatchNote");
     }
     const clusterNote =
       (cur._clusterSize || 1) > 1
-        ? ` · 同地 ${cur._clusterSize} 时段（已环形展开）`
+        ? _t("map.clusterNote", { n: cur._clusterSize })
         : "";
-    status.textContent = `当前 · 时段 ${cur.slot + 1}（${cur.time_label}）· 意图：${intentTxt} · 位置：${locTxt}${clusterNote}${hungerTxt}`;
+    status.textContent = _t("map.currentStatus", {
+      slot: cur.slot + 1,
+      time: cur.time_label,
+      intent: intentTxt,
+      loc: locTxt,
+      cluster: clusterNote,
+      hunger: hungerTxt,
+    });
   }
 
   renderSchematicLegends(data);
@@ -1372,36 +1377,46 @@ function getTimelineTooltip() {
 
 function buildTimelineTooltipHtml(s, data) {
   const sch = data.schedule || {};
-  const planLabels = sch.activity_labels || SCHEDULE_ACTIVITY_LABELS;
 
   const planText = !sch.available
-    ? "计划未生成"
+    ? _t("timeline.noPlanGen")
     : !s.plan
-      ? "无计划块"
-      : planLabels[s.plan.activity] || s.plan.label || s.plan.activity;
+      ? _t("timeline.noPlanBlock")
+      : getScheduleActivityLabel(s.plan.activity) || s.plan.label || s.plan.activity;
 
-  const intText = s.filled ? INTENTION_LABELS[s.intention] || s.intention || "—" : "未完成";
-  const posText =
+  const intText = s.filled ? getIntentionLabel(s.intention) : _t("timeline.pending");
+  const rawPos =
     s.filled && (s.position_label || s.position_kind != null)
-      ? s.position_label || POSITION_KIND_LABELS[s.position_kind] || s.position_kind
-      : "无快照";
+      ? (s.position_label
+        ? (window.DashboardI18n ? window.DashboardI18n.locationLabel(s.position_label) : s.position_label)
+        : getPositionKindLabel(s.position_kind))
+      : _t("timeline.noSnapshot");
 
   const { planMismatch, posMismatch } = slotDriftInfo(s);
   const driftLines = [];
   if (planMismatch) {
     driftLines.push(
-      `计划→意图：${INTENTION_LABELS[s.plan.intention] || s.plan.intention} ≠ ${INTENTION_LABELS[s.intention] || s.intention}`,
+      _t("timeline.driftPlan", {
+        plan: getIntentionLabel(s.plan.intention),
+        actual: getIntentionLabel(s.intention),
+      }),
     );
   }
   if (posMismatch) {
     driftLines.push(
-      `意图↔位置：${INTENTION_LABELS[s.intention] || s.intention} 与 ${POSITION_KIND_LABELS[s.position_kind] || s.position_kind} 可能不符`,
+      _t("timeline.driftPos", {
+        intent: getIntentionLabel(s.intention),
+        pos: getPositionKindLabel(s.position_kind),
+      }),
     );
   }
 
   const ms = milestoneBySlot.get(s.slot);
+  const msText = ms
+    ? (window.DashboardI18n ? window.DashboardI18n.milestoneLabel(ms.label || "") : (ms.label || ""))
+    : "";
   const msLine = ms
-    ? `<div class="tt-row tt-ms">${escapeHtml(ms.icon || "")} ${escapeHtml(ms.label || "")}</div>`
+    ? `<div class="tt-row tt-ms">${escapeHtml(ms.icon || "")} ${escapeHtml(msText)}</div>`
     : "";
 
   const timeExtra = s.simulation_time ? ` · ${escapeHtml(s.simulation_time)}` : "";
@@ -1409,10 +1424,10 @@ function buildTimelineTooltipHtml(s, data) {
     ? `<div class="tt-drift">${driftLines.map((line) => escapeHtml(line)).join("<br>")}</div>`
     : "";
 
-  return `<div class="tt-title">时段 ${s.slot + 1} · ${escapeHtml(s.time_label || "")}${timeExtra}</div>
-    <div class="tt-row"><span class="tt-k">计划</span><span>${escapeHtml(String(planText))}</span></div>
-    <div class="tt-row"><span class="tt-k">意图</span><span>${escapeHtml(String(intText))}</span></div>
-    <div class="tt-row"><span class="tt-k">位置</span><span>${escapeHtml(String(posText))}</span></div>
+  return `<div class="tt-title">${escapeHtml(_t("timeline.tipTitle", { slot: s.slot + 1, time: s.time_label || "", extra: "" }))}${timeExtra}</div>
+    <div class="tt-row"><span class="tt-k">${escapeHtml(_t("timeline.plan"))}</span><span>${escapeHtml(String(planText))}</span></div>
+    <div class="tt-row"><span class="tt-k">${escapeHtml(_t("timeline.intent"))}</span><span>${escapeHtml(String(intText))}</span></div>
+    <div class="tt-row"><span class="tt-k">${escapeHtml(_t("timeline.loc"))}</span><span>${escapeHtml(String(rawPos))}</span></div>
     ${msLine}
     ${driftBlock}`;
 }
@@ -1516,42 +1531,43 @@ function renderSchedulePanel(data) {
   if (!tbody) return;
 
   if (!sch.available) {
-    if (diaryEl) diaryEl.textContent = "计划尚未生成：需至少完成一步 rhythm hook（agents/…/state/rhythm_state.json）。";
+    if (diaryEl) diaryEl.textContent = _t("schedule.notReady");
     if (metaEl) metaEl.innerHTML = "";
-    if (descEl) descEl.textContent = "等待日初 timetable …";
+    if (descEl) descEl.textContent = _t("schedule.waitTimetable");
     tbody.innerHTML =
-      '<tr><td colspan="4" class="empty-hint">暂无 daily_schedule</td></tr>';
+      `<tr><td colspan="4" class="empty-hint">${escapeHtml(_t("schedule.empty"))}</td></tr>`;
     return;
   }
 
   const prefs = sch.preferences || {};
   const prefBits = [];
-  if (prefs.wake_time != null) prefBits.push(`起床 ${formatHour(prefs.wake_time)}`);
-  if (prefs.work_start != null) prefBits.push(`上班 ${formatHour(prefs.work_start)}`);
-  if (prefs.work_end != null) prefBits.push(`下班 ${formatHour(prefs.work_end)}`);
-  if (sch.norm_strength != null) prefBits.push(`规范强度 ${(Number(sch.norm_strength) * 100).toFixed(0)}%`);
+  if (prefs.wake_time != null) prefBits.push(_t("schedule.wake", { time: formatHour(prefs.wake_time) }));
+  if (prefs.work_start != null) prefBits.push(_t("schedule.workStart", { time: formatHour(prefs.work_start) }));
+  if (prefs.work_end != null) prefBits.push(_t("schedule.workEnd", { time: formatHour(prefs.work_end) }));
+  if (sch.norm_strength != null) prefBits.push(_t("schedule.normStrength", { pct: (Number(sch.norm_strength) * 100).toFixed(0) }));
   if (metaEl) {
     metaEl.innerHTML = prefBits.map((t) => `<span class="schedule-chip">${escapeHtml(t)}</span>`).join("");
   }
   if (descEl) {
     descEl.textContent = sch.scheduled_activity
-      ? `当前计划段：${formatScheduleActivity(sch.scheduled_activity)}`
-      : "日初 timetable · rhythm daily_schedule";
+      ? _t("schedule.currentBlock", { activity: formatScheduleActivity(sch.scheduled_activity) })
+      : _t("schedule.defaultLoaded");
   }
   if (diaryEl) diaryEl.textContent = sch.daily_diary || "—";
 
   const colors = sch.activity_colors || {};
-  const labels = sch.activity_labels || SCHEDULE_ACTIVITY_LABELS;
   const currentActivity = sch.scheduled_activity?.activity;
   tbody.innerHTML = (sch.blocks || [])
     .map((block) => {
       const activity = block.activity || "home_activity";
       const isCurrent = currentActivity && activity === currentActivity;
-      const meal = block.meal_window ? escapeHtml(String(block.meal_window)) : "—";
+      const meal = block.meal_window
+        ? escapeHtml(window.DashboardI18n ? window.DashboardI18n.mealWindowLabel(block.meal_window) : String(block.meal_window))
+        : "—";
       const range = `${formatHour(block.start)}–${formatHour(block.end)}`;
       return `<tr class="${isCurrent ? "schedule-row-current" : ""}">
         <td class="mono">${range}</td>
-        <td><span class="schedule-activity-pill" style="background:${scheduleColor(colors, activity)}22;color:${scheduleColor(colors, activity)}">${escapeHtml(labels[activity] || activity)}</span></td>
+        <td><span class="schedule-activity-pill" style="background:${scheduleColor(colors, activity)}22;color:${scheduleColor(colors, activity)}">${escapeHtml(getScheduleActivityLabel(activity))}</span></td>
         <td>${meal}</td>
         <td class="schedule-norm">${escapeHtml(block.norm || "—")}</td>
       </tr>`;
@@ -1568,8 +1584,7 @@ function formatHour(hour) {
 function formatScheduleActivity(slot) {
   if (!slot || typeof slot !== "object") return "—";
   const activity = slot.activity || "—";
-  const labels = state?.schedule?.activity_labels || SCHEDULE_ACTIVITY_LABELS;
-  return labels[activity] || activity;
+  return getScheduleActivityLabel(activity);
 }
 
 function buildTimeAxis() {
@@ -1616,7 +1631,7 @@ function initNeedsChart() {
       }),
       datasets: [
         {
-          label: "饥饿",
+          label: _t("needs.hunger"),
           data: [],
           borderColor: "#dc2626",
           backgroundColor: "rgba(220,38,38,0.08)",
@@ -1628,7 +1643,7 @@ function initNeedsChart() {
           borderWidth: 2.5,
         },
         {
-          label: "精力",
+          label: _t("needs.energy"),
           data: [],
           borderColor: "#2563eb",
           backgroundColor: "rgba(37,99,235,0.06)",
@@ -1640,7 +1655,7 @@ function initNeedsChart() {
           borderWidth: 2.5,
         },
         {
-          label: "压力",
+          label: _t("needs.stress"),
           data: [],
           borderColor: "#7c3aed",
           backgroundColor: "rgba(124,58,237,0.06)",
@@ -1666,14 +1681,14 @@ function initNeedsChart() {
         milestoneLines: { items: [] },
         tooltip: {
           backgroundColor: "rgba(15,23,42,0.92)",
-          titleFont: { family: '"Noto Sans SC", sans-serif', size: 12 },
-          bodyFont: { family: '"Noto Sans SC", sans-serif', size: 12 },
+          titleFont: { family: '"Noto Sans", "Noto Sans SC", sans-serif', size: 12 },
+          bodyFont: { family: '"Noto Sans", "Noto Sans SC", sans-serif', size: 12 },
           padding: 10,
           cornerRadius: 8,
           callbacks: {
             title(items) {
               if (!items.length) return "";
-              return `时段 ${items[0].dataIndex + 1} · ${items[0].label}`;
+              return _t("needs.tooltipTitle", { slot: items[0].dataIndex + 1, time: items[0].label });
             },
             label(ctx) {
               const v = ctx.parsed.y;
@@ -1747,7 +1762,8 @@ function activityCategoryColor(data, category) {
 }
 
 function activityCategoryLabel(data, category) {
-  return data?.activity_log?.category_labels?.[category] || category;
+  const fallback = data?.activity_log?.category_labels?.[category] || category;
+  return window.DashboardI18n ? window.DashboardI18n.activityCategoryLabel(category, fallback) : fallback;
 }
 
 function activitySlotFilterBounds() {
@@ -1773,7 +1789,7 @@ function syncActivitySlotFilterUi(data) {
   if (!fromEl || !toEl) return;
 
   if (!fromEl.dataset.initialized) {
-    const opts = ['<option value="">全部</option>'];
+    const opts = [`<option value="">${escapeHtml(_t("activity.allSlots"))}</option>`];
     for (let slot = 0; slot < 48; slot += 1) {
       const label = formatSlotOptionLabel(slot, data);
       opts.push(`<option value="${slot}">${escapeHtml(label)}</option>`);
@@ -1909,7 +1925,7 @@ function updateEnvCalls(data) {
 
   if (!allRecords.length) {
     summaryEl.innerHTML =
-      '<span class="env-empty">暂无活动记录（实验推进后将出现环境调用、观察、Codegen、技能等）</span>';
+      `<span class="env-empty">${escapeHtml(_t("activity.emptyAll"))}</span>`;
     list.innerHTML = "";
     return;
   }
@@ -1928,18 +1944,18 @@ function updateEnvCalls(data) {
   const shownFails = records.filter((r) => r.ok === false).length;
   const slotBounds = activitySlotFilterBounds();
   const slotChip = slotBounds
-    ? `<span class="env-stat-chip">时段 <strong>${slotBounds[0] + 1}–${slotBounds[1] + 1}</strong></span>`
+    ? `<span class="env-stat-chip">${_t("activity.slotRange", { from: slotBounds[0] + 1, to: slotBounds[1] + 1 })}</span>`
     : "";
 
   summaryEl.innerHTML = `
-    <span class="env-stat-chip env-stat-total">显示 <strong>${records.length}</strong> / ${allRecords.length} 条</span>
+    <span class="env-stat-chip env-stat-total">${_t("activity.showing", { shown: records.length, total: allRecords.length })}</span>
     ${slotChip}
-    <span class="env-stat-chip ${shownFails ? "env-stat-warn" : ""}">失败 <strong>${shownFails}</strong></span>
+    <span class="env-stat-chip ${shownFails ? "env-stat-warn" : ""}">${_t("activity.failedBadge", { count: shownFails })}</span>
     ${kindBits}
   `;
 
   if (!records.length) {
-    list.innerHTML = '<li class="env-empty">当前筛选无记录，可切换「全部」或取消类别筛选</li>';
+    list.innerHTML = `<li class="env-empty">${escapeHtml(_t("activity.emptyFiltered"))}</li>`;
     return;
   }
 
@@ -1950,18 +1966,24 @@ function updateEnvCalls(data) {
       const color = activityCategoryColor(data, cat);
       const slot = r.slot != null ? r.slot + 1 : "—";
       const catLabel = activityCategoryLabel(data, cat);
+      const itemLabel = window.DashboardI18n
+        ? window.DashboardI18n.activityRecordLabel(r.label || r.kind || "—")
+        : (r.label || r.kind || "—");
+      const summaryText = window.DashboardI18n
+        ? window.DashboardI18n.activitySummaryText(r.summary || "—")
+        : (r.summary || "—");
       const status =
-        r.ok === false ? "✗ 失败" : r.ok === true ? "✓ 成功" : "—";
+        r.ok === false ? _t("activity.statusFail") : r.ok === true ? _t("activity.statusOk") : "—";
       return `
     <li class="env-call-item activity-item${r.ok === false ? " failed" : ""}" data-slot="${escapeHtml(r.slot ?? "")}" data-category="${escapeHtml(cat)}" style="animation-delay:${Math.min(idx, 12) * 30}ms">
       <div class="env-call-head">
         <span class="env-fn-tag activity-cat-tag" style="border-color:${color};color:${color}">${escapeHtml(catLabel)}</span>
-        <span class="env-fn-tag activity-kind-tag">${escapeHtml(r.label || r.kind || "—")}</span>
-        <span class="env-call-meta">时段 ${slot} · ${escapeHtml(r.source || "—")}</span>
+        <span class="env-fn-tag activity-kind-tag">${escapeHtml(itemLabel)}</span>
+        <span class="env-call-meta">${escapeHtml(_t("activity.itemMeta", { slot, source: r.source || "—" }))}</span>
         <span class="env-call-status">${status}</span>
       </div>
       <div class="env-call-detail">
-        <span>${escapeHtml(r.summary || "—")}</span>
+        <span>${escapeHtml(summaryText)}</span>
         ${r.detail ? `<span class="env-call-ret">→ ${escapeHtml(r.detail)}</span>` : ""}
       </div>
     </li>`;
@@ -2016,7 +2038,7 @@ function toggleSchematicPlay() {
   schematicFollowLive = false;
   schematicPlaying = true;
   const playBtn = $("schematic-play");
-  if (playBtn) playBtn.textContent = "⏸ 暂停";
+  if (playBtn) playBtn.textContent = _t("map.pause");
   schematicPlayTimer = setInterval(() => {
     if (!state) {
       stopSchematicPlay();
@@ -2041,21 +2063,27 @@ function openDrawer(slot) {
   const s = (state?.slots || [])[slot];
   if (!drawer || !s) return;
 
-  $("drawer-title").textContent = `时段 ${slot + 1} · ${s.time_label}${s.simulation_time ? `（${s.simulation_time}）` : ""
-    }`;
+  $("drawer-title").textContent = _t("drawer.title", {
+    slot: slot + 1,
+    time: s.time_label,
+    sim: s.simulation_time ? ` (${s.simulation_time})` : "",
+  });
 
   const colors = state.intention_colors || {};
   const body = $("drawer-body");
 
   if (!s.filled) {
+    const mealTxt = s.plan?.meal_window
+      ? ` · ${window.DashboardI18n ? window.DashboardI18n.mealWindowLabel(s.plan.meal_window) : s.plan.meal_window}`
+      : "";
     const planBlock = s.plan
       ? `<div class="detail-card full plan-block">
-          <label>计划（${escapeHtml(s.plan.time_range || "—")}）</label>
-          <div class="value">${escapeHtml(SCHEDULE_ACTIVITY_LABELS[s.plan.activity] || s.plan.label || "—")}${s.plan.meal_window ? ` · ${escapeHtml(s.plan.meal_window)}` : ""}</div>
+          <label>${escapeHtml(_t("drawer.planHeader", { range: s.plan.time_range || "—" }))}</label>
+          <div class="value">${escapeHtml(getScheduleActivityLabel(s.plan.activity) || s.plan.label || "—")}${escapeHtml(mealTxt)}</div>
           ${s.plan.norm ? `<p class="plan-norm">${escapeHtml(s.plan.norm)}</p>` : ""}
         </div>`
       : "";
-    body.innerHTML = `${planBlock}<p class="empty-hint">该时段问卷尚未完成，请等待实验推进。</p>`;
+    body.innerHTML = `${planBlock}<p class="empty-hint">${escapeHtml(_t("drawer.notCompleted"))}</p>`;
   } else {
     const q = s.questionnaire || {};
     const answers = (q.responses || [])
@@ -2066,39 +2094,45 @@ function openDrawer(slot) {
       (q.questions || []).find((x) => x.id === "primary_intention")?.prompt || "";
 
     const fmtNeed = (v) => (v != null ? `${(Number(v) * 100).toFixed(0)}%` : "—");
+    const mealTag = s.plan?.meal_window
+      ? `<span class="plan-meal-tag">${escapeHtml(window.DashboardI18n ? window.DashboardI18n.mealWindowLabel(s.plan.meal_window) : s.plan.meal_window)}</span>`
+      : "";
+    const rawPosLabel = s.position_label
+      ? (window.DashboardI18n ? window.DashboardI18n.locationLabel(s.position_label) : s.position_label)
+      : "—";
 
     body.innerHTML = `
       ${s.plan
         ? `<div class="detail-card full plan-block">
-            <label>计划（${escapeHtml(s.plan.time_range || "—")}）</label>
+            <label>${escapeHtml(_t("drawer.planHeader", { range: s.plan.time_range || "—" }))}</label>
             <div class="value">
               <span class="intention-pill" style="background:${scheduleColor(state.schedule?.activity_colors, s.plan.activity)}18;color:${scheduleColor(state.schedule?.activity_colors, s.plan.activity)}">
-                ${escapeHtml(SCHEDULE_ACTIVITY_LABELS[s.plan.activity] || s.plan.label || "—")}
+                ${escapeHtml(getScheduleActivityLabel(s.plan.activity) || s.plan.label || "—")}
               </span>
-              ${s.plan.meal_window ? `<span class="plan-meal-tag">${escapeHtml(s.plan.meal_window)}</span>` : ""}
+              ${mealTag}
             </div>
             ${s.plan.norm ? `<p class="plan-norm">${escapeHtml(s.plan.norm)}</p>` : ""}
-            ${isPlanIntentionMismatch(s.plan.intention, s.intention) ? '<p class="plan-deviation-note">与计划映射的意图不同</p>' : ""}
+            ${isPlanIntentionMismatch(s.plan.intention, s.intention) ? `<p class="plan-deviation-note">${escapeHtml(_t("drawer.planMismatch"))}</p>` : ""}
           </div>`
         : ""
       }
       <div class="detail-grid">
         <div class="detail-card">
-          <label>主要意图</label>
+          <label>${escapeHtml(_t("drawer.mainIntent"))}</label>
           <span class="intention-pill value" style="background:${intentionColor(colors, s.intention)}18;color:${intentionColor(colors, s.intention)}">
-            ${escapeHtml(INTENTION_LABELS[s.intention] || s.intention || "—")}
+            ${escapeHtml(getIntentionLabel(s.intention))}
           </span>
         </div>
         <div class="detail-card">
-          <label>位置类型</label>
-          <div class="value">${escapeHtml(POSITION_KIND_LABELS[s.position_kind] || s.position_kind || "—")}</div>
+          <label>${escapeHtml(_t("drawer.posType"))}</label>
+          <div class="value">${escapeHtml(getPositionKindLabel(s.position_kind))}</div>
         </div>
         <div class="detail-card full">
-          <label>位置（快照原文）</label>
-          <div class="value mono">${escapeHtml(s.position_label || "—")}</div>
+          <label>${escapeHtml(_t("drawer.posRaw"))}</label>
+          <div class="value mono">${escapeHtml(rawPosLabel)}</div>
         </div>
         <div class="detail-card">
-          <label>仿真时刻</label>
+          <label>${escapeHtml(_t("drawer.simTime"))}</label>
           <div class="value">${escapeHtml(s.simulation_time || s.time_label || "—")}</div>
         </div>
         <div class="detail-card">
@@ -2106,19 +2140,19 @@ function openDrawer(slot) {
           <div class="value mono">${s.aoi_id ?? "—"}</div>
         </div>
         <div class="detail-card">
-          <label>档案 home AOI</label>
+          <label>${escapeHtml(_t("drawer.homeAoi"))}</label>
           <div class="value mono">${s.home_aoi ?? state?.home_aoi ?? "—"}</div>
         </div>
         <div class="detail-card">
-          <label>档案 work AOI</label>
+          <label>${escapeHtml(_t("drawer.workAoi"))}</label>
           <div class="value mono">${s.work_aoi ?? state?.work_aoi ?? "—"}</div>
         </div>
         <div class="detail-card">
-          <label>引擎状态</label>
-          <div class="value">${escapeHtml(s.status || "—")}${isMovingPoint(s) ? " · 路程中" : ""}</div>
+          <label>${escapeHtml(_t("drawer.engineStatus"))}</label>
+          <div class="value">${escapeHtml(s.status || "—")}${isMovingPoint(s) ? escapeHtml(_t("drawer.onTheWay")) : ""}</div>
         </div>
         ${s.target_aoi_id != null
-        ? `<div class="detail-card"><label>通勤目标</label><div class="value">${escapeHtml(targetAoiLabel(s.target_aoi_id, s.home_aoi, s.work_aoi) || String(s.target_aoi_id))}</div></div>`
+        ? `<div class="detail-card"><label>${escapeHtml(_t("drawer.commuteTarget"))}</label><div class="value">${escapeHtml(targetAoiLabel(s.target_aoi_id, s.home_aoi, s.work_aoi) || String(s.target_aoi_id))}</div></div>`
         : ""
       }
         ${s.poi_name
@@ -2126,40 +2160,40 @@ function openDrawer(slot) {
         : ""
       }
         <div class="detail-card">
-          <label>饥饿</label>
+          <label>${escapeHtml(_t("drawer.hunger"))}</label>
           <div class="value need-val need-hunger">${fmtNeed(s.needs?.hunger)}</div>
         </div>
         <div class="detail-card">
-          <label>精力</label>
+          <label>${escapeHtml(_t("drawer.energy"))}</label>
           <div class="value need-val need-energy">${fmtNeed(s.needs?.energy)}</div>
         </div>
         <div class="detail-card">
-          <label>压力</label>
+          <label>${escapeHtml(_t("drawer.stress"))}</label>
           <div class="value need-val need-stress">${fmtNeed(s.needs?.stress)}</div>
         </div>
         ${s.lng != null
-        ? `<div class="detail-card full"><label>坐标</label><div class="value mono">${s.lat?.toFixed(5)}, ${s.lng?.toFixed(5)}</div></div>`
+        ? `<div class="detail-card full"><label>${escapeHtml(_t("drawer.coords"))}</label><div class="value mono">${s.lat?.toFixed(5)}, ${s.lng?.toFixed(5)}</div></div>`
         : ""
       }
         ${s.artifact_file
-        ? `<div class="detail-card full"><label>产物文件</label><div class="value mono">${escapeHtml(s.artifact_file)}</div></div>`
+        ? `<div class="detail-card full"><label>${escapeHtml(_t("drawer.artifactFile"))}</label><div class="value mono">${escapeHtml(s.artifact_file)}</div></div>`
         : ""
       }
       </div>
       ${s.reason
-        ? `<div class="reason-block"><strong>智能体理由</strong><br/>${escapeHtml(s.reason)}</div>`
+        ? `<div class="reason-block"><strong>${escapeHtml(_t("drawer.agentReason"))}</strong><br/>${escapeHtml(s.reason)}</div>`
         : ""
       }
       ${primary?.raw_response || primary?.raw_text
-        ? `<div class="q-section"><h3>原始回答</h3><pre class="q-prompt">${escapeHtml(primary.raw_response || primary.raw_text)}</pre></div>`
+        ? `<div class="q-section"><h3>${escapeHtml(_t("drawer.rawResponse"))}</h3><pre class="q-prompt">${escapeHtml(primary.raw_response || primary.raw_text)}</pre></div>`
         : ""
       }
       ${prompt
-        ? `<div class="q-section"><h3>问卷提示（节选）</h3><div class="q-prompt">${escapeHtml(prompt.slice(0, 1200))}${prompt.length > 1200 ? "…" : ""}</div></div>`
+        ? `<div class="q-section"><h3>${escapeHtml(_t("drawer.promptExcerpt"))}</h3><div class="q-prompt">${escapeHtml(prompt.slice(0, 1200))}${prompt.length > 1200 ? "…" : ""}</div></div>`
         : ""
       }
       <details class="raw-json">
-        <summary>完整问卷 JSON（溯源）</summary>
+        <summary>${escapeHtml(_t("drawer.rawJson"))}</summary>
         <pre>${escapeHtml(JSON.stringify(q, null, 2))}</pre>
       </details>
     `;
@@ -2184,15 +2218,15 @@ function updateMilestoneUi(data) {
   if (legend) {
     if (!milestones.length) {
       legend.innerHTML =
-        '<span class="m-tag" style="cursor:default;opacity:0.7">暂无里程碑（起床/就餐等会在问卷推进后出现）</span>';
+        `<span class="m-tag" style="cursor:default;opacity:0.7">${escapeHtml(_t("needs.milestonesEmpty"))}</span>`;
     } else {
       legend.innerHTML = milestones
-        .map(
-          (m) =>
-            `<button type="button" class="m-tag" data-slot="${m.slot}" title="时段 ${m.slot + 1} · 点击查看">
-              <i class="m-dot" style="background:${m.color}"></i>${m.icon || ""} ${escapeHtml(m.label)}
-            </button>`,
-        )
+        .map((m) => {
+          const mLabel = window.DashboardI18n ? window.DashboardI18n.milestoneLabel(m.label) : m.label;
+          return `<button type="button" class="m-tag" data-slot="${m.slot}" title="${escapeHtml(_t("timeline.milestoneTagTitle", { slot: m.slot + 1 }))}">
+              <i class="m-dot" style="background:${m.color}"></i>${m.icon || ""} ${escapeHtml(mLabel)}
+            </button>`;
+        })
         .join("");
       legend.querySelectorAll(".m-tag[data-slot]").forEach((btn) => {
         btn.addEventListener("click", () => selectSlot(Number(btn.dataset.slot)));
@@ -2215,6 +2249,7 @@ function paintTimelineMilestones(milestones) {
     row.style.minHeight = `${Math.max(28, 12 + (maxLane + 1) * 26)}px`;
     row.innerHTML = "";
     laid.forEach((m) => {
+      const mLabel = window.DashboardI18n ? window.DashboardI18n.milestoneLabel(m.label) : m.label;
       const el = document.createElement("button");
       el.type = "button";
       el.className = "marker";
@@ -2222,8 +2257,8 @@ function paintTimelineMilestones(milestones) {
       el.style.left = `${m.leftPct}%`;
       el.style.top = `${m.lane * 26}px`;
       el.style.borderColor = m.color;
-      el.innerHTML = `<span class="marker-icon" aria-hidden="true">${escapeHtml(m.icon || "")}</span><span class="marker-text">${escapeHtml(m.label)}</span>`;
-      el.title = `${milestoneMarkerTitle(m)} · 点击定位`;
+      el.innerHTML = `<span class="marker-icon" aria-hidden="true">${escapeHtml(m.icon || "")}</span><span class="marker-text">${escapeHtml(mLabel)}</span>`;
+      el.title = milestoneMarkerTitle(m);
       el.addEventListener("click", () => selectSlot(m.slot));
       row.appendChild(el);
     });
@@ -2348,14 +2383,40 @@ async function tick() {
     const aid = selectedAgentId;
     if (text) {
       text.textContent = state
-        ? `智能体 ${aid} · 刷新失败：${err.message}`
-        : `连接失败：${err.message}`;
+        ? _t("nav.statusRefreshErr", { id: aid, err: err.message })
+        : _t("nav.statusConnectErr", { err: err.message });
     }
     if (dot) dot.classList.toggle("idle", !state);
   }
 }
 
+function applyLanguageChange(nextLang) {
+  if (!window.DashboardI18n) return;
+  window.DashboardI18n.setLang(nextLang);
+  if (needsChart) {
+    needsChart.data.datasets[0].label = _t("needs.hunger");
+    needsChart.data.datasets[1].label = _t("needs.energy");
+    needsChart.data.datasets[2].label = _t("needs.stress");
+    needsChart.update("none");
+  }
+  const fromEl = $("activity-slot-from");
+  if (fromEl) delete fromEl.dataset.initialized;
+  window.GeoMapView?.refreshLanguage?.();
+  setMapView(mapViewMode);
+  if (state) {
+    render(state);
+    const drawer = $("detail-drawer");
+    if (drawer && !drawer.classList.contains("hidden") && selectedSlot != null) {
+      openDrawer(selectedSlot);
+    }
+  }
+}
+
 function bindUi() {
+  $("lang-select")?.addEventListener("change", (e) => {
+    applyLanguageChange(e.target.value);
+  });
+
   $("drawer-close")?.addEventListener("click", closeDrawer);
   $("drawer-backdrop")?.addEventListener("click", closeDrawer);
   document.addEventListener("keydown", (e) => {
@@ -2426,6 +2487,7 @@ function onResize() {
 }
 
 function start() {
+  window.DashboardI18n?.applyStatic();
   initSchematic();
   buildTimeAxis();
   initNeedsChart();

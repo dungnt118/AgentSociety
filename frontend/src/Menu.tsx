@@ -12,10 +12,17 @@ const RootMenu = ({ selectedKey, style }: {
 }) => {
     const { t, i18n } = useTranslation();
 
-    const handleLanguageChange = () => {
-        const newLang = i18n.language === 'en' ? 'zh' : 'en';
-        i18n.changeLanguage(newLang);
+    const currentLang = (i18n.resolvedLanguage || i18n.language || 'vi').split('-')[0];
+    const languageLabels: Record<string, string> = {
+        vi: 'Tiếng Việt',
+        en: 'English',
+        zh: '中文',
     };
+    const languageItems: MenuProps['items'] = [
+        { key: 'vi', label: 'Tiếng Việt' },
+        { key: 'en', label: 'English' },
+        { key: 'zh', label: '中文' },
+    ];
 
     const agentItems: MenuProps['items'] = [
         {
@@ -98,13 +105,19 @@ const RootMenu = ({ selectedKey, style }: {
                 minWidth: '320px',
                 justifyContent: 'flex-end'
             }}>
-                <Button
-                    type="text"
-                    style={{ color: 'white' }}
-                    onClick={handleLanguageChange}
+                <Dropdown
+                    menu={{
+                        items: languageItems,
+                        selectedKeys: [currentLang],
+                        onClick: ({ key }) => i18n.changeLanguage(key),
+                    }}
+                    placement="bottomRight"
+                    arrow
                 >
-                    {i18n.language === 'en' ? '中文' : 'English'}
-                </Button>
+                    <Button type="text" style={{ color: 'white' }} icon={<GlobalOutlined />}>
+                        {languageLabels[currentLang] || 'Tiếng Việt'}
+                    </Button>
+                </Dropdown>
                 {WITH_AUTH && <Account />}
             </div>
         </div>

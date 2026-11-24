@@ -1,0 +1,2426 @@
+{
+  "versions": {
+    "skill": "2.0.0",
+    "methodology": "2.0.0",
+    "schema": "2.0.0",
+    "template": "2.0.0"
+  },
+  "audit": {
+    "project": "AgentSociety (v2.12.0 Active Scope)",
+    "date": "2026-11-24",
+    "snapshot": "d:/PROJECTS/AgentSociety @ main (e7186aad430e, working tree clean)",
+    "branch": "main",
+    "commit": "e7186aad430e4c392b6d1c252120bffea8d9c900",
+    "scope": [
+      "packages/agentsociety2/ (Python SDK v2.12.0 — trọng tâm kiểm toán)",
+      "extension/ (VS Code extension ai-social-scientist v1.10.0 — phân tách vai trò workbench)",
+      "frontend/ (React + Vite web console — ranh giới giao diện)",
+      "Ngoài phạm vi active: packages/agentsociety/ (v1 legacy), agentsociety-community, agentsociety-benchmark, và các dịch vụ bên ngoài (LLM API, MCP gateway https://llmapi.fiblab.net/mcp/, Claude Code/Codex CLI)."
+    ],
+    "tools": [
+      "Đọc trực tiếp mã nguồn & truy vết luồng thực thi (file:line, symbol)",
+      "Kiểm tra fixture cô lập trên Python 3.13.15 (WorkspaceFS, AgentMemoryStore, path_security)",
+      "Đối chiếu manifest (pyproject.toml, uv.lock, extension/package.json)"
+    ],
+    "limitations": [
+      "Môi trường kiểm toán cục bộ chạy Windows với Python 3.13.15, chưa cài uv/.venv và thiếu các gói litellm, ray, faiss-cpu, mcp, duckdb, pytest; do đó chưa chạy được bộ 46 pytest hay mô phỏng đầu-cuối (E2E) với LLM/Ray thật.",
+      "Process sandbox của CodeGenRouter (codegen_worker.py) chỉ hoạt động trên Linux nên không thể kiểm thử thực nghiệm RLIMIT/prctl trên máy Windows.",
+      "Chưa kiểm tra dịch vụ ngoài (LLM gateway, MCP server https://llmapi.fiblab.net/mcp/, và plugin ngoài paper-toolkit)."
+    ],
+    "repositories": [
+      {
+        "id": "agentsociety",
+        "commit": "e7186aad430e4c392b6d1c252120bffea8d9c900",
+        "branch": "main",
+        "snapshot": "d:/PROJECTS/AgentSociety @ main (e7186aad430e, working tree clean)"
+      }
+    ]
+  },
+  "classification": {
+    "has_harness": true,
+    "level": 3,
+    "origin": "Ứng dụng tự xây dựng (lai SDK/Framework: tự sở hữu vòng đời trên LiteLLM, Ray, MCP SDK, FAISS)",
+    "confidence": "high",
+    "rationale": "AgentSociety v2 triển khai đầy đủ kiến trúc Agent Harness phân lớp do ứng dụng tự sở hữu vòng đời: (1) AgentBase/PersonAgent sở hữu vòng lặp ReAct đa bước, prompt-prefix caching, memory consolidation, TODO và AgentSkillRuntime với worker subprocess cô lập; (2) CodeGenRouter/ReActRouter/PlanExecuteRouter sở hữu lớp trung gian LLM-tool với AST safety guard và Linux process sandbox; (3) AgentSociety sở hữu vòng đời mô phỏng phân tán trên Ray Tasks với checkpoint/resume 2 tệp nguyên tử; (4) Analysis Harness cung cấp deterministic CLI harness có phase gates cho AI agent ngoài. Xếp Mức 3 (không phải Mức 4) vì chưa có bằng chứng vận hành đầu-cuối (runtime_coverage_pct=0%) và còn lỗ hổng bảo mật in-process ở Backend custom module cùng lỗi logic replan ở AgentSocietyHelper.",
+    "evidence_ids": [
+      "EV-005",
+      "EV-007",
+      "EV-009",
+      "EV-015",
+      "EV-020",
+      "EV-023"
+    ]
+  },
+  "projects": [
+    {
+      "name": "packages/agentsociety2",
+      "role": "SDK lõi chứa toàn bộ Agent Harness, Env Routers, Society Orchestrator, Analysis Harness và FastAPI Backend (v2.12.0)",
+      "status": "active_audited",
+      "evidence_ids": [
+        "EV-001",
+        "EV-003",
+        "EV-005",
+        "EV-020"
+      ]
+    },
+    {
+      "name": "extension",
+      "role": "VS Code Workbench (ai-social-scientist v1.10.0) quản lý Backend, mở Claude Code/Codex và đồng bộ cấu hình MCP",
+      "status": "active_audited_boundary",
+      "evidence_ids": [
+        "EV-001",
+        "EV-030"
+      ]
+    },
+    {
+      "name": "frontend",
+      "role": "Web dashboard React + Vite giao tiếp Backend API",
+      "status": "active_boundary_only",
+      "evidence_ids": [
+        "EV-001"
+      ]
+    }
+  ],
+  "agents": [
+    {
+      "name": "PersonAgent (trên AgentBase)",
+      "role": "Tác tử mô phỏng con người chạy vòng lặp ReAct đa bước, gắn workspace, có memory, TODO và skill runtime",
+      "status": "implemented_static",
+      "evidence_ids": [
+        "EV-005",
+        "EV-007",
+        "EV-011"
+      ]
+    },
+    {
+      "name": "AgentSocietyHelper",
+      "role": "Tác tử phụ trợ Plan-and-Execute XML phục vụ truy vấn/can thiệp xã hội (ask/intervene) với 6 tool",
+      "status": "implemented_with_defect_risk",
+      "evidence_ids": [
+        "EV-022"
+      ]
+    },
+    {
+      "name": "Contrib Specialized Agents (7 lớp)",
+      "role": "Các tác tử trò chơi/thực nghiệm kế thừa AgentBase (public_goods, prisoners_dilemma, trust_game, llm_donor_agent, ...)",
+      "status": "implemented_static",
+      "evidence_ids": [
+        "EV-012"
+      ]
+    }
+  ],
+  "components": [
+    {
+      "name": "AgentBase & AgentSkillRuntime",
+      "role": "Harness lõi của tác tử: quản lý vòng lặp ReAct, tool dispatch, bảo vệ workspace, skill metadata-first và skill_worker.py",
+      "status": "implemented_static",
+      "evidence_ids": [
+        "EV-005",
+        "EV-006",
+        "EV-009",
+        "EV-010",
+        "EV-031"
+      ]
+    },
+    {
+      "name": "Env Routers & CodeGen Sandbox",
+      "role": "Harness trung gian gồm đủ 6 router (CodeGenRouter, ReActRouter, PlanExecuteRouter, TwoTierReActRouter, TwoTierPlanExecuteRouter, SearchToolRouter) + AST guard + Linux process worker + FAISS template cache",
+      "status": "implemented_static",
+      "evidence_ids": [
+        "EV-014",
+        "EV-015",
+        "EV-016",
+        "EV-017",
+        "EV-018",
+        "EV-019",
+        "EV-035",
+        "EV-038"
+      ]
+    },
+    {
+      "name": "AgentSociety Orchestrator & Ray Runner",
+      "role": "Runtime điều phối N tác tử dạng Ray Tasks, QuestionnaireRunner khảo sát song song, quản lý đồng hồ mô phỏng và checkpoint/resume SOCIETY.json + SOCIETY_STEP.json",
+      "status": "implemented_static",
+      "evidence_ids": [
+        "EV-013",
+        "EV-020",
+        "EV-021",
+        "EV-037"
+      ]
+    },
+    {
+      "name": "Analysis Harness (CLI)",
+      "role": "Deterministic phase-gated CLI harness (0 lời gọi LLM) kiểm soát AI agent phân tích bên ngoài + experience memory",
+      "status": "implemented_static",
+      "evidence_ids": [
+        "EV-023"
+      ]
+    },
+    {
+      "name": "LLMClient & AdaptiveSemaphore",
+      "role": "Bộ điều phối LLM per-event-loop trên LiteLLM, kiểm soát đồng thời AIMD, retry/timeout và chuẩn hóa thinking",
+      "status": "implemented_static",
+      "evidence_ids": [
+        "EV-024"
+      ]
+    },
+    {
+      "name": "ReplaySink & ShardedAppendSink",
+      "role": "Lớp lưu trữ replay và trace OTel dạng 256 shard JSONL",
+      "status": "implemented_static",
+      "evidence_ids": [
+        "EV-025",
+        "EV-026"
+      ]
+    },
+    {
+      "name": "FastAPI Backend",
+      "role": "Dịch vụ REST API đọc kết quả thí nghiệm, quản lý custom modules và skill marketplace",
+      "status": "implemented_with_security_gaps",
+      "evidence_ids": [
+        "EV-028",
+        "EV-029",
+        "EV-033",
+        "EV-036"
+      ]
+    },
+    {
+      "name": "Research Skills (Experiment, Hypothesis, Literature)",
+      "role": "Bộ công cụ điều phối quy trình nghiên cứu (khởi tạo/theo dõi PID thí nghiệm, quản lý giả thuyết, truy vấn MCP tài liệu)",
+      "status": "implemented_static",
+      "evidence_ids": [
+        "EV-027",
+        "EV-037"
+      ]
+    }
+  ],
+  "frameworks": [
+    {
+      "name": "litellm",
+      "role": "Model SDK / Router đa nhà cung cấp (OpenAI, Anthropic)",
+      "status": "active",
+      "version": "1.103.10",
+      "usage": "LLMClient._build_router và Config.get_router cho default/coder/embedding",
+      "in_execution_path": true,
+      "evidence_ids": [
+        "EV-003",
+        "EV-004",
+        "EV-024"
+      ]
+    },
+    {
+      "name": "ray",
+      "role": "Runtime thực thi phân tán (Tasks cho agent batches, Actor cho EnvRouter)",
+      "status": "active_non_win32",
+      "version": "2.58.0",
+      "usage": "step_agent_batch, questionnaire_agent_batch và EnvRouterActor (chỉ cài khi sys_platform != win32)",
+      "in_execution_path": true,
+      "evidence_ids": [
+        "EV-003",
+        "EV-004",
+        "EV-013",
+        "EV-019"
+      ]
+    },
+    {
+      "name": "mcp",
+      "role": "Model Context Protocol SDK (ToolManager nội bộ + Streamable HTTP client)",
+      "status": "active_partial",
+      "version": "2.3.0",
+      "usage": "EnvBase chỉ dùng mcp Tool/ToolManager làm JSON Schema builder nội bộ; giao thức MCP thực tế nằm ở skills/literature/mcp_client.py (Streamable HTTP client) và extension/src/services/mcpClient.ts (HTTP JSON-RPC + SSE probe)",
+      "in_execution_path": true,
+      "evidence_ids": [
+        "EV-003",
+        "EV-004",
+        "EV-027",
+        "EV-037"
+      ]
+    },
+    {
+      "name": "faiss-cpu",
+      "role": "Chỉ mục vector tìm kiếm tương đồng cho CodeGen template cache",
+      "status": "active",
+      "version": "1.15.1",
+      "usage": "CodeGenRouter TemplateCacheDB (IndexFlatIP) — không dùng làm RAG cho agent",
+      "in_execution_path": true,
+      "evidence_ids": [
+        "EV-003",
+        "EV-004",
+        "EV-015"
+      ]
+    },
+    {
+      "name": "pydantic",
+      "role": "Xác thực schema dữ liệu, cấu hình, memory episodes và kết quả LLM",
+      "status": "active",
+      "version": "2.13.5",
+      "usage": "RouterBase.acompletion_with_pydantic_validation, AgentMemoryStore, Analysis Harness models",
+      "in_execution_path": true,
+      "evidence_ids": [
+        "EV-004",
+        "EV-014",
+        "EV-023"
+      ]
+    },
+    {
+      "name": "mem0ai",
+      "role": "Thư viện quản lý bộ nhớ tác tử (khai báo dependency lõi nhưng không nằm trong đường chạy chính)",
+      "status": "contrib_only",
+      "version": "2.1.0",
+      "usage": "Chỉ import ở 1 contrib agent (llm_donor_agent.py), không dùng trong PersonAgent",
+      "in_execution_path": false,
+      "evidence_ids": [
+        "EV-003",
+        "EV-004",
+        "EV-012"
+      ]
+    }
+  ],
+  "integrations": [
+    {
+      "name": "LLM Providers (OpenAI / Anthropic compatible)",
+      "role": "Suy luận cho PersonAgent, CodeGenRouter, AgentSocietyHelper và memory consolidation",
+      "status": "verified_source",
+      "boundary": "HTTP/HTTPS qua LiteLLM Router (AGENTSOCIETY_LLM_API_BASE)",
+      "authentication": "API key qua biến môi trường AGENTSOCIETY_[CODER_]LLM_API_KEY",
+      "errors": "Timeout 60s, max_retries=3, fail-fast context limit, backoff mũ 429, AdaptiveSemaphore AIMD",
+      "runtime": "Chưa kiểm chứng runtime (không có API key trong môi trường audit)",
+      "evidence_ids": [
+        "EV-024"
+      ]
+    },
+    {
+      "name": "Literature MCP Gateway",
+      "role": "Tìm kiếm và nạp tài liệu học thuật cho research workflow",
+      "status": "verified_source",
+      "boundary": "Streamable HTTP MCP client tới LITERATURE_SEARCH_MCP_URL (mặc định https://llmapi.fiblab.net/mcp/)",
+      "authentication": "Bearer token tùy chọn qua LITERATURE_SEARCH_API_KEY",
+      "errors": "Timeout 120s (list_tools 30/300s), kiểm tra is_error ngoài async with, không có retry",
+      "runtime": "Chưa kiểm chứng runtime",
+      "evidence_ids": [
+        "EV-027"
+      ]
+    },
+    {
+      "name": "External AI Coding Agents (Claude Code / Codex / Cursor)",
+      "role": "Tác tử nghiên cứu bên ngoài điều phối qua VS Code extension và Analysis Harness CLI",
+      "status": "verified_source",
+      "boundary": "VS Code commands, ~/.claude.json MCP config và Analysis Harness CLI JSON/YAML artifacts",
+      "authentication": "Quản lý bởi IDE/CLI bên ngoài",
+      "errors": "Cưỡng chế qua exit code 0/1/2 và phase gates của Analysis Harness",
+      "runtime": "Ngoài phạm vi thực thi của kho mã",
+      "evidence_ids": [
+        "EV-023",
+        "EV-030"
+      ]
+    }
+  ],
+  "architecture": {
+    "nodes": [
+      {
+        "id": "cli",
+        "label": "Society CLI (agentsociety)",
+        "kind": "entrypoint",
+        "display_group": "custom",
+        "evidence_ids": [
+          "EV-021"
+        ]
+      },
+      {
+        "id": "ext",
+        "label": "VS Code Extension Workbench",
+        "kind": "ui_workbench",
+        "display_group": "custom",
+        "evidence_ids": [
+          "EV-030"
+        ]
+      },
+      {
+        "id": "backend",
+        "label": "FastAPI Backend (:8001)",
+        "kind": "api_service",
+        "display_group": "custom",
+        "evidence_ids": [
+          "EV-028",
+          "EV-029"
+        ]
+      },
+      {
+        "id": "society",
+        "label": "AgentSociety Orchestrator",
+        "kind": "orchestrator",
+        "display_group": "custom",
+        "evidence_ids": [
+          "EV-020"
+        ]
+      },
+      {
+        "id": "helper",
+        "label": "AgentSocietyHelper (XML)",
+        "kind": "agent_helper",
+        "display_group": "custom",
+        "evidence_ids": [
+          "EV-022"
+        ]
+      },
+      {
+        "id": "runner",
+        "label": "Ray Batch Runner (step/questionnaire)",
+        "kind": "runtime",
+        "display_group": "sdk",
+        "evidence_ids": [
+          "EV-013"
+        ]
+      },
+      {
+        "id": "person",
+        "label": "PersonAgent / AgentBase Harness",
+        "kind": "agent_harness",
+        "display_group": "custom",
+        "evidence_ids": [
+          "EV-005",
+          "EV-007"
+        ]
+      },
+      {
+        "id": "skill_rt",
+        "label": "AgentSkillRuntime & skill_worker",
+        "kind": "tool_sandbox",
+        "display_group": "custom",
+        "evidence_ids": [
+          "EV-009",
+          "EV-010"
+        ]
+      },
+      {
+        "id": "env_router",
+        "label": "EnvRouterActor (6 Routers: CodeGen/ReAct/Plan/TwoTier/Search)",
+        "kind": "env_harness",
+        "display_group": "custom",
+        "evidence_ids": [
+          "EV-014",
+          "EV-015",
+          "EV-019",
+          "EV-035"
+        ]
+      },
+      {
+        "id": "codegen_sandbox",
+        "label": "CodeGen Worker (Linux Process / InProcess)",
+        "kind": "sandbox",
+        "display_group": "custom",
+        "evidence_ids": [
+          "EV-016"
+        ]
+      },
+      {
+        "id": "analysis_harness",
+        "label": "Analysis Harness CLI (Phase Gates)",
+        "kind": "deterministic_harness",
+        "display_group": "custom",
+        "evidence_ids": [
+          "EV-023"
+        ]
+      },
+      {
+        "id": "llm_client",
+        "label": "LLMClient / LiteLLM + AIMD",
+        "kind": "model_gateway",
+        "display_group": "sdk",
+        "evidence_ids": [
+          "EV-024"
+        ]
+      },
+      {
+        "id": "storage",
+        "label": "Workspace / ReplaySink / ShardedTrace",
+        "kind": "storage",
+        "display_group": "custom",
+        "evidence_ids": [
+          "EV-011",
+          "EV-025",
+          "EV-026",
+          "EV-031"
+        ]
+      },
+      {
+        "id": "ext_llm",
+        "label": "External LLM Providers",
+        "kind": "external_service",
+        "display_group": "external",
+        "evidence_ids": [
+          "EV-024"
+        ]
+      },
+      {
+        "id": "ext_mcp",
+        "label": "Literature MCP Gateway",
+        "kind": "external_service",
+        "display_group": "external",
+        "evidence_ids": [
+          "EV-027"
+        ]
+      }
+    ],
+    "edges": [
+      {
+        "from": "cli",
+        "to": "society",
+        "label": "khởi chạy & --resume",
+        "status": "verified_source",
+        "evidence_ids": [
+          "EV-021"
+        ]
+      },
+      {
+        "from": "ext",
+        "to": "backend",
+        "label": "HTTP REST & quản lý tiến trình",
+        "status": "verified_source",
+        "evidence_ids": [
+          "EV-030"
+        ]
+      },
+      {
+        "from": "ext",
+        "to": "analysis_harness",
+        "label": "điều phối qua AI agent ngoài",
+        "status": "verified_source",
+        "evidence_ids": [
+          "EV-023",
+          "EV-030"
+        ]
+      },
+      {
+        "from": "society",
+        "to": "runner",
+        "label": "fan-out batch (max_retries=0)",
+        "status": "verified_source",
+        "evidence_ids": [
+          "EV-013",
+          "EV-020"
+        ]
+      },
+      {
+        "from": "society",
+        "to": "helper",
+        "label": "ask() / intervene()",
+        "status": "verified_source",
+        "evidence_ids": [
+          "EV-020",
+          "EV-022"
+        ]
+      },
+      {
+        "from": "society",
+        "to": "env_router",
+        "label": "init / step / checkpoint",
+        "status": "verified_source",
+        "evidence_ids": [
+          "EV-019",
+          "EV-020"
+        ]
+      },
+      {
+        "from": "runner",
+        "to": "person",
+        "label": "from_workspace -> step -> to_workspace",
+        "status": "verified_source",
+        "evidence_ids": [
+          "EV-013"
+        ]
+      },
+      {
+        "from": "person",
+        "to": "skill_rt",
+        "label": "hooks & execute_skill_script",
+        "status": "verified_source",
+        "evidence_ids": [
+          "EV-006",
+          "EV-009"
+        ]
+      },
+      {
+        "from": "person",
+        "to": "env_router",
+        "label": "ask_env() qua EnvRouterProxy",
+        "status": "verified_source",
+        "evidence_ids": [
+          "EV-006",
+          "EV-019"
+        ]
+      },
+      {
+        "from": "person",
+        "to": "llm_client",
+        "label": "ReAct completion & memory consolidation",
+        "status": "verified_source",
+        "evidence_ids": [
+          "EV-005",
+          "EV-011",
+          "EV-024"
+        ]
+      },
+      {
+        "from": "person",
+        "to": "storage",
+        "label": "AGENT.json, MEMORY.md, trace JSONL",
+        "status": "verified_source",
+        "evidence_ids": [
+          "EV-007",
+          "EV-011",
+          "EV-025",
+          "EV-031"
+        ]
+      },
+      {
+        "from": "env_router",
+        "to": "codegen_sandbox",
+        "label": "thực thi code sinh (AST guarded)",
+        "status": "verified_source",
+        "evidence_ids": [
+          "EV-015",
+          "EV-016"
+        ]
+      },
+      {
+        "from": "env_router",
+        "to": "llm_client",
+        "label": "codegen / summary / embedding",
+        "status": "verified_source",
+        "evidence_ids": [
+          "EV-014",
+          "EV-015",
+          "EV-024"
+        ]
+      },
+      {
+        "from": "helper",
+        "to": "llm_client",
+        "label": "XML plan / replan / final answer",
+        "status": "verified_source",
+        "evidence_ids": [
+          "EV-022",
+          "EV-024"
+        ]
+      },
+      {
+        "from": "llm_client",
+        "to": "ext_llm",
+        "label": "OpenAI / Anthropic API",
+        "status": "verified_source",
+        "evidence_ids": [
+          "EV-024"
+        ]
+      },
+      {
+        "from": "backend",
+        "to": "storage",
+        "label": "đọc replay/log/artifacts & ghi custom/skills",
+        "status": "verified_source",
+        "evidence_ids": [
+          "EV-028",
+          "EV-029",
+          "EV-033"
+        ]
+      },
+      {
+        "from": "ext",
+        "to": "ext_mcp",
+        "label": "cấu hình & truy vấn literature MCP",
+        "status": "verified_source",
+        "evidence_ids": [
+          "EV-027",
+          "EV-030"
+        ]
+      }
+    ]
+  },
+  "flows": [
+    {
+      "id": "FLOW-01",
+      "name": "PersonAgent Step & ReAct Tool Loop",
+      "entry": "PersonAgent.step(tick, t) trong packages/agentsociety2/agentsociety2/agent/person.py:L538",
+      "result": "Chuỗi tóm tắt bước (hoặc [idle-skip]), cập nhật MEMORY.md/episodes.jsonl, TODO.json và trace spans",
+      "runtime": "Chưa xác minh E2E; đã kiểm fixture cô lập cho WorkspaceFS (EV-031) và AgentMemoryStore (EV-032)",
+      "steps": [
+        {
+          "name": "Khởi tạo & pre_step hooks",
+          "detail": "Chạy _ensure_initialized(), làm mới visible skills và thực thi pre_step lifecycle hooks; nếu idle_skip_enabled=True và đang ở đoạn sleep thì đi nhanh xác định (fail-open).",
+          "evidence_ids": [
+            "EV-007"
+          ]
+        },
+        {
+          "name": "Quan sát môi trường",
+          "detail": "Gọi ask_env('<observe>', readonly=True) kèm trace_id/parent_span_id để thu nhận observation ban đầu.",
+          "evidence_ids": [
+            "EV-007",
+            "EV-019"
+          ]
+        },
+        {
+          "name": "Xây dựng thread tối ưu prefix-cache",
+          "detail": "build_react_messages() tạo 1 thread duy nhất mỗi step (base_rules bất biến + <agent> + <turn_state> + <memory_context> + <todo_context>), không cắt đầu.",
+          "evidence_ids": [
+            "EV-005",
+            "EV-008"
+          ]
+        },
+        {
+          "name": "Vòng lặp ReAct & gọi tool",
+          "detail": "Lặp tối đa _max_react_turns: gọi LLM, parse native tool calls hoặc text fallback, chạy song song đúng 5 action trong _REACT_PARALLEL_SAFE_ACTIONS (read/list/grep/read_skill_file/todo_list) và tuần tự các tool còn lại (kể cả ask_env/memory_*), bảo vệ tệp lõi (trả ok=True no-op), chuyển hướng env:* sang ask_env, làm mới <todo_context>/<active_skills> giữa step.",
+          "evidence_ids": [
+            "EV-005",
+            "EV-006",
+            "EV-009"
+          ]
+        },
+        {
+          "name": "Kết thúc & hợp nhất bộ nhớ",
+          "detail": "Thu finish(memories=...), chạy post_step hooks và gọi memory_runtime.after_step() ghi episodes.jsonl + hợp nhất MEMORY.md khi đạt ngưỡng.",
+          "evidence_ids": [
+            "EV-005",
+            "EV-007",
+            "EV-011"
+          ]
+        }
+      ],
+      "branches": [
+        {
+          "kind": "success",
+          "detail": "Model gọi tool finish hợp lệ -> trả về tóm tắt và lưu inline memories không cần lượt LLM tách rời.",
+          "evidence_ids": [
+            "EV-005"
+          ]
+        },
+        {
+          "kind": "failure",
+          "detail": "Model xuất tool call sai schema/không hợp lệ -> retry 1 lần trong lượt với <schema_error> phản hồi từng tool_call_id; nếu tool lỗi thì trả 'ERROR: ...' vào thread.",
+          "evidence_ids": [
+            "EV-005",
+            "EV-006"
+          ]
+        },
+        {
+          "kind": "recovery",
+          "detail": "Cạn _max_react_turns mà chưa gọi finish -> tổng hợp _synthesize_step_fallback_memory() (step mode) hoặc _synthesize_ask_fallback() (ask mode) để bảo toàn tiến độ.",
+          "evidence_ids": [
+            "EV-005"
+          ]
+        }
+      ],
+      "evidence_ids": [
+        "EV-005",
+        "EV-006",
+        "EV-007",
+        "EV-008",
+        "EV-009",
+        "EV-011"
+      ]
+    },
+    {
+      "id": "FLOW-02",
+      "name": "CodeGenRouter & Isolated Sandbox Execution",
+      "entry": "EnvRouterProxy.ask() -> CodeGenRouter.ask() tại packages/agentsociety2/agentsociety2/env/router_codegen.py:L2404",
+      "result": "Tuple (ctx, answer) kèm trạng thái thực thi và cập nhật FAISS template cache nếu hợp lệ",
+      "runtime": "Chưa xác minh E2E (thiếu LLM/FAISS/Linux sandbox trên máy kiểm toán Windows)",
+      "steps": [
+        {
+          "name": "Định tuyến qua EnvRouterProxy",
+          "detail": "Gửi RPC tới EnvRouterActor với timeout 900s (max_concurrency=64 nếu mọi module concurrency-safe, ngược lại 1).",
+          "evidence_ids": [
+            "EV-019"
+          ]
+        },
+        {
+          "name": "Chuỗi cung cấp mã (Provider Chain)",
+          "detail": "Thử lần lượt PredefinedCodeProvider -> NormalizedInstructionProvider (mặc định tắt) -> CacheCodeProvider (exact match rồi FAISS IndexFlatIP trên HMAC-signed cache.pkl) -> LLMCodegenProvider.",
+          "evidence_ids": [
+            "EV-015"
+          ]
+        },
+        {
+          "name": "Kiểm tra an toàn AST & chèn deadline",
+          "detail": "CodeStage._validate_code_safety chặn dunder/eval/exec/module nguy hiểm, chèn _ExecutionGuards deadline vào vòng lặp/hàm và kiểm tra gán results['status'].",
+          "evidence_ids": [
+            "EV-015"
+          ]
+        },
+        {
+          "name": "Thực thi trong Sandbox & tổng hợp",
+          "detail": "Chạy trên Linux process worker (python -I -S, RLIMIT_AS=512MiB, NOFILE=64, wall-clock 10s, RPC tool về parent kiểm readonly) hoặc inprocess trên non-Linux; SummaryStage xuất kết quả xác định từ stdout.",
+          "evidence_ids": [
+            "EV-015",
+            "EV-016"
+          ]
+        }
+      ],
+      "branches": [
+        {
+          "kind": "success",
+          "detail": "Code chạy sạch, trả results['status'] hợp lệ -> lưu mẫu vào TemplateCacheDB (HMAC-SHA256) và trả về cho tác tử.",
+          "evidence_ids": [
+            "EV-015"
+          ]
+        },
+        {
+          "kind": "failure",
+          "detail": "Code vi phạm AST hoặc lỗi runtime -> lặp sửa mã tối đa max_llm_call_retry=10; dừng ngay không retry nếu finish_reason=='length' hoặc write_attempted==True để tránh lặp side-effect ghi.",
+          "evidence_ids": [
+            "EV-015"
+          ]
+        },
+        {
+          "kind": "recovery",
+          "detail": "Worker timeout/crash trên Linux -> WorkerPool.lease() gọi os.killpg(..., SIGKILL) và hủy worker hỏng, không tái sử dụng; EnvRouterProxy gọi ray.cancel khi quá hạn RPC.",
+          "evidence_ids": [
+            "EV-016",
+            "EV-019"
+          ]
+        }
+      ],
+      "evidence_ids": [
+        "EV-014",
+        "EV-015",
+        "EV-016",
+        "EV-019"
+      ]
+    },
+    {
+      "id": "FLOW-03",
+      "name": "AgentSociety CLI Simulation & Crash-Safe Resume",
+      "entry": "agentsociety CLI (packages/agentsociety2/agentsociety2/society/cli.py:L971) -> AgentSociety.init()/step()",
+      "result": "Hoàn tất kịch bản steps.yaml, ghi sharded replay JSONL, artifacts và cập nhật SOCIETY_STEP.json",
+      "runtime": "Chưa xác minh E2E (thiếu Ray/.venv/LLM key)",
+      "steps": [
+        {
+          "name": "Pre-flight & tạo workspace",
+          "detail": "Kiểm tra biến môi trường, chặn ghi đè run_dir cũ, fan-out create_agents_batch tạo thư mục agent_XXXX, ghi SOCIETY.json (schema_version=2) một lần duy nhất.",
+          "evidence_ids": [
+            "EV-020",
+            "EV-021"
+          ]
+        },
+        {
+          "name": "Đánh dấu tick & fan-out Ray Tasks",
+          "detail": "Ghi pending_update='tick' vào SOCIETY_STEP.json, fan-out step_agent_batch.options(max_retries=0) theo batch_size=256 (mỗi worker from_workspace -> step -> to_workspace -> close).",
+          "evidence_ids": [
+            "EV-013",
+            "EV-020"
+          ]
+        },
+        {
+          "name": "Tiến môi trường & commit nguyên tử",
+          "detail": "Chạy env_router.step(tick, t) (timeout 900s), gọi env_router.to_workspaces(), ghi SOCIETY_STEP.json mới với pending_update=None và tăng step_count.",
+          "evidence_ids": [
+            "EV-014",
+            "EV-020"
+          ]
+        },
+        {
+          "name": "Phục hồi qua --resume",
+          "detail": "_read_checkpoint() kiểm tra schema_version==2 và pending_update is None, khôi phục seed/env state/agent workspace và bỏ qua bước < completed_step_count.",
+          "evidence_ids": [
+            "EV-020",
+            "EV-021"
+          ]
+        }
+      ],
+      "branches": [
+        {
+          "kind": "success",
+          "detail": "Tất cả batch và env module hoàn tất -> commit SOCIETY_STEP.json nguyên tử và tiến sang bước tiếp theo.",
+          "evidence_ids": [
+            "EV-020"
+          ]
+        },
+        {
+          "kind": "failure",
+          "detail": "Có lỗi agent/batch -> lưu best-effort trạng thái agent, ghi bảng core_step_failures, raise RuntimeError và giữ nguyên pending_update='tick' (không gọi env.step).",
+          "evidence_ids": [
+            "EV-013",
+            "EV-020"
+          ]
+        },
+        {
+          "kind": "recovery",
+          "detail": "Nếu crash giữa tick/intervention, lần --resume sau sẽ từ chối chạy (fail-closed ValueError) do pending_update!=None để tránh dữ liệu lệch trạng thái.",
+          "evidence_ids": [
+            "EV-020"
+          ]
+        }
+      ],
+      "evidence_ids": [
+        "EV-013",
+        "EV-014",
+        "EV-020",
+        "EV-021"
+      ]
+    },
+    {
+      "id": "FLOW-04",
+      "name": "Analysis Harness Phase-Gated Workflow & Experience Memory",
+      "entry": "python -m agentsociety2.skills.analysis.harness.cli (packages/agentsociety2/agentsociety2/skills/analysis/harness/)",
+      "result": "Báo cáo phân tích song ngữ đã qua review độc lập, artifact manifest và bài học/công thức trong experience memory",
+      "runtime": "Chưa xác minh runtime (analysis/__init__.py kéo duckdb chưa cài trong Python local)",
+      "steps": [
+        {
+          "name": "Khởi tạo & Preflight",
+          "detail": "evaluate_operation_availability kiểm tra input, capabilities, depends_on_gates; execute_operation khóa file theo execution_key và ghi OperationRunReceipt.",
+          "evidence_ids": [
+            "EV-023"
+          ]
+        },
+        {
+          "name": "Cổng pha 2 lớp (Dual-layer Gate)",
+          "detail": "Mỗi pha (frame->explore->claims->refine->produce->synthesis) phải vượt qua validator cấu trúc xác định và PhaseAttestation từ AI agent bên ngoài.",
+          "evidence_ids": [
+            "EV-023"
+          ]
+        },
+        {
+          "name": "Kiểm chứng phát hành (Release Gate)",
+          "detail": "validate-release kiểm tra đồng thời đủ tệp song ngữ, chất lượng báo cáo và kết quả report-reviewer độc lập (verdict==PASS, score>=4, khớp SHA-256 report_fingerprint).",
+          "evidence_ids": [
+            "EV-023"
+          ]
+        },
+        {
+          "name": "Experience Memory 4 bước",
+          "detail": "draft-reflection -> record-feedback -> review-reflection (chặn thiếu bằng chứng hoặc chưa xác nhận preference) -> promote-reflection (chống trùng) và tự nạp lại vào phiên sau.",
+          "evidence_ids": [
+            "EV-023"
+          ]
+        }
+      ],
+      "branches": [
+        {
+          "kind": "success",
+          "detail": "Đạt cả structural validator và attestation -> cho phép cmd_advance sang pha kế tiếp (exit code 0).",
+          "evidence_ids": [
+            "EV-023"
+          ]
+        },
+        {
+          "kind": "failure",
+          "detail": "Thiếu rubric, nhảy cóc pha hoặc artifact bị sửa sau khi attest (attestation_stale qua SHA-256) -> trả BLOCKED (exit code 2).",
+          "evidence_ids": [
+            "EV-023"
+          ]
+        },
+        {
+          "kind": "recovery",
+          "detail": "Tác tử bên ngoài chạy lại bước bị chặn theo fix hint và gọi record-attestation mới để cập nhật fingerprint.",
+          "evidence_ids": [
+            "EV-023"
+          ]
+        }
+      ],
+      "evidence_ids": [
+        "EV-023"
+      ]
+    }
+  ],
+  "evidence": [
+    {
+      "id": "EV-001",
+      "project": "agentsociety2",
+      "path": "AGENTS.md",
+      "symbol": "Active scope & Key subsystems",
+      "lines": "L1-L82",
+      "category": "scope",
+      "finding": "Xác định phạm vi active gồm packages/agentsociety2/, examples/v2/daily_mobility/, extension/, frontend/; packages/agentsociety (v1) là legacy tham chiếu.",
+      "usage": "Chốt phạm vi kiểm toán và ranh giới phân hệ active.",
+      "status": "verified_source",
+      "confidence": "high",
+      "limits": "Tài liệu định hướng, cần đối chiếu với mã thực thi.",
+      "verification_kind": "static_source"
+    },
+    {
+      "id": "EV-002",
+      "project": "agentsociety2",
+      "path": "README.md",
+      "symbol": "AgentSociety 2 Features & Architecture",
+      "lines": "L59-L116",
+      "category": "requirement",
+      "finding": "Công bố yêu cầu sản phẩm: nền tảng mô phỏng tác tử LLM-native, nhiều router (CodeGen/ReAct/Plan-Execute/Two-Tier/Search), Ray runtime, Research Skills, Replay JSONL+DuckDB, hỗ trợ MCP.",
+      "usage": "Nguồn xác lập tiêu chí phù hợp mục đích (fitness) cho C1–C12.",
+      "status": "verified_source",
+      "confidence": "high",
+      "limits": "Mô tả mục tiêu sản phẩm, không chứng minh triển khai.",
+      "verification_kind": "static_source"
+    },
+    {
+      "id": "EV-003",
+      "project": "agentsociety2",
+      "path": "packages/agentsociety2/pyproject.toml",
+      "symbol": "project.dependencies & project.scripts",
+      "lines": "L5-L92",
+      "category": "manifest",
+      "finding": "SDK agentsociety2 v2.12.0 khai báo 2 CLI scripts (agentsociety, agentsociety-workspace) và các phụ thuộc litellm, mcp[cli], mem0ai, faiss-cpu, ray (non-win32), duckdb, fastapi, pydantic, tiktoken.",
+      "usage": "Đối chiếu dependency khai báo với mức sử dụng thực tế trong đường gọi.",
+      "status": "verified_source",
+      "confidence": "high",
+      "limits": "Manifest chỉ phản ánh khai báo, không chứng minh runtime gọi tới.",
+      "verification_kind": "static_source"
+    },
+    {
+      "id": "EV-004",
+      "project": "agentsociety2",
+      "path": "uv.lock",
+      "symbol": "locked package versions",
+      "lines": "L1070-L3740",
+      "category": "manifest",
+      "finding": "Khóa phiên bản: litellm==1.103.10 (L2034), mcp==2.3.0 (L2208), mem0ai==2.1.0 (L2273), ray==2.58.0 (L3739), faiss-cpu==1.15.1 (L1070), fastapi==0.141.1 (L1093), pydantic==2.13.5 (L3279).",
+      "usage": "Định danh chính xác phiên bản dependency của snapshot.",
+      "status": "verified_source",
+      "confidence": "high",
+      "limits": "Môi trường local chưa chạy uv sync nên chưa kiểm tra import trực tiếp các gói ngoài.",
+      "verification_kind": "static_source"
+    },
+    {
+      "id": "EV-005",
+      "project": "agentsociety2",
+      "path": "packages/agentsociety2/agentsociety2/agent/base/agent.py",
+      "symbol": "AgentBase.run_react_loop",
+      "lines": "L2038-L2345",
+      "category": "execution_loop",
+      "finding": "Vòng lặp ReAct đa bước trong AgentBase: giữ thread append-only bảo toàn prompt-prefix cache, giới hạn _max_react_turns (mặc định 10, whitelist 1..20), retry 1 lần trong lượt khi lỗi schema/parse, phản hồi lỗi qua role:tool hoặc <schema_error>, tổng hợp fallback khi cạn lượt.",
+      "usage": "Bằng chứng lõi cho phân loại Agent Harness, C1, C2, C8 và FLOW-01.",
+      "status": "verified_source",
+      "confidence": "high",
+      "limits": "Chỉ xác minh qua đọc mã nguồn, chưa chạy LLM thật.",
+      "verification_kind": "static_source"
+    },
+    {
+      "id": "EV-006",
+      "project": "agentsociety2",
+      "path": "packages/agentsociety2/agentsociety2/agent/base/agent.py",
+      "symbol": "AgentBase._execute_react_tools & dispatch_react_tool & _is_core_owned_workspace_path",
+      "lines": "L1393-L1956",
+      "category": "tool_dispatch",
+      "finding": "Thực thi song song qua asyncio.gather cho đúng 5 action trong _REACT_PARALLEL_SAFE_ACTIONS ({'read','list','grep','read_skill_file','todo_list'}, L1393-L1401, L1543-L1553), còn ask_env(readonly=True) và memory_* chạy tuần tự; chặn write/append/ask_env mutation khi readonly=True; bảo vệ tệp lõi bằng normpath+casefold (trả ReactToolResult(True, ...) no-op tại L1662-L1670); chuyển hướng skill env:* sang ask_env.",
+      "usage": "Bằng chứng C4, C9 và FLOW-01.",
+      "status": "verified_source",
+      "confidence": "high",
+      "limits": "Không thấy wall-clock timeout cấp vòng lặp run_react_loop.",
+      "verification_kind": "static_source"
+    },
+    {
+      "id": "EV-007",
+      "project": "agentsociety2",
+      "path": "packages/agentsociety2/agentsociety2/agent/person.py",
+      "symbol": "PersonAgent.step, ask, build_context_refresh_message, _idle_skip_segment",
+      "lines": "L354-L716",
+      "category": "agent_lifecycle",
+      "finding": "PersonAgent kế thừa AgentBase: chạy pre_step hooks, hỗ trợ idle-skip fail-open cho giấc ngủ (mặc định tắt), gọi ask_env('<observe>'), chạy run_react_loop, chạy post_step hooks, gọi memory_runtime.after_step, và làm mới <todo_context>/<active_skills> giữa step mà không phá prefix cache.",
+      "usage": "Bằng chứng C1, C2, C3 và FLOW-01.",
+      "status": "verified_source",
+      "confidence": "high",
+      "limits": "Phân tích tĩnh mã nguồn.",
+      "verification_kind": "static_source"
+    },
+    {
+      "id": "EV-008",
+      "project": "agentsociety2",
+      "path": "packages/agentsociety2/agentsociety2/agent/person_prompt.py",
+      "symbol": "BASE_RULES_TEMPLATE, load_prompt_overrides, _ask_mode_rules, json_block",
+      "lines": "L14-L310",
+      "category": "context_engineering",
+      "finding": "Thiết kế prompt tối ưu prefix-cache: khối base_rules bất biến chia sẻ giữa mọi agent, json_block dùng sort_keys=True, hỗ trợ prompt_overrides.json cấp run (fail-safe), và khối <ask_mode_rules> chứa chỉ thị OVERRIDE REJECTION chống prompt injection từ skill/env.",
+      "usage": "Bằng chứng C2, C9 và FLOW-01.",
+      "status": "verified_source",
+      "confidence": "high",
+      "limits": "Chống prompt injection dựa vào chỉ thị prompt, chưa có lớp lọc nội dung độc lập.",
+      "verification_kind": "static_source"
+    },
+    {
+      "id": "EV-009",
+      "project": "agentsociety2",
+      "path": "packages/agentsociety2/agentsociety2/agent/base/skill_runtime.py",
+      "symbol": "AgentSkillRuntime, ALLOWED_ENV_VARS, _run_in_process",
+      "lines": "L34-L950",
+      "category": "skill_runtime",
+      "finding": "Skill runtime chọn theo metadata (metadata-first): built-in chạy in-process nếu có entrypoint/hook; custom skill chạy trong subprocess cô lập qua skill_worker.py với whitelist biến môi trường ALLOWED_ENV_VARS (chặn rò rỉ API key mặc định trừ khi khai báo AGENTSOCIETY_SKILL_ENV_ALLOW) và timeout_sec.",
+      "usage": "Bằng chứng C4, C9 và FLOW-01.",
+      "status": "verified_source",
+      "confidence": "high",
+      "limits": "Subprocess skill_worker không đặt RLIMIT bộ nhớ hay cấm truy cập mạng/FS ngoài cwd.",
+      "verification_kind": "static_source"
+    },
+    {
+      "id": "EV-010",
+      "project": "agentsociety2",
+      "path": "packages/agentsociety2/agentsociety2/agent/base/skill_worker.py",
+      "symbol": "_invoke, main",
+      "lines": "L21-L137",
+      "category": "skill_runtime",
+      "finding": "Worker subprocess nạp động script skill qua importlib.util, chuyển hướng stdout của script sang stderr và trả JSON có cấu trúc về parent.",
+      "usage": "Bằng chứng ranh giới thực thi custom skill (C4, C9).",
+      "status": "verified_source",
+      "confidence": "high",
+      "limits": "Phân tích tĩnh.",
+      "verification_kind": "static_source"
+    },
+    {
+      "id": "EV-011",
+      "project": "agentsociety2",
+      "path": "packages/agentsociety2/agentsociety2/agent/memory_runtime.py",
+      "symbol": "PersonMemoryRuntime, MemoryRuntimeConfig",
+      "lines": "L88-L250",
+      "category": "memory",
+      "finding": "PersonAgent quản lý bộ nhớ qua MEMORY.md + memory/episodes.jsonl (AgentMemoryStore), công cụ memory_recent/memory_search/memory_range và hợp nhất định kỳ bằng LLM theo ngưỡng pending_threshold/interval_steps/importance; không dùng mem0ai.",
+      "usage": "Bằng chứng C3, C7 và đối chiếu dependency mem0ai.",
+      "status": "verified_source",
+      "confidence": "high",
+      "limits": "Chỉ đọc mã nguồn; kiểm tra fixture riêng ở EV-032.",
+      "verification_kind": "static_source"
+    },
+    {
+      "id": "EV-012",
+      "project": "agentsociety2",
+      "path": "packages/agentsociety2/agentsociety2/contrib/agent/llm_donor_agent.py",
+      "symbol": "AsyncMemory (mem0ai usage)",
+      "lines": "L8-L148",
+      "category": "dependency_usage",
+      "finding": "Tìm kiếm toàn bộ packages/agentsociety2/agentsociety2/ cho thấy mem0ai chỉ được import tại 1 contrib agent duy nhất (llm_donor_agent.py) và không lưu bền vào workspace; PersonAgent lõi không dùng mem0ai.",
+      "usage": "Bằng chứng đối chiếu giữa dependency manifest và đường gọi thực tế (C3).",
+      "status": "verified_source",
+      "confidence": "high",
+      "limits": "Phạm vi tìm kiếm giới hạn trong packages/agentsociety2/agentsociety2/.",
+      "verification_kind": "static_source"
+    },
+    {
+      "id": "EV-013",
+      "project": "agentsociety2",
+      "path": "packages/agentsociety2/agentsociety2/agent/runner.py",
+      "symbol": "_step_agent_batch_async, _questionnaire_agent_batch_async, step_agent_batch",
+      "lines": "L124-L350",
+      "category": "distributed_execution",
+      "finding": "Chạy tác tử theo lô dạng Ray Tasks không trạng thái (from_workspace -> step -> to_workspace -> close), fan-out đồng thời bằng asyncio.gather, lưu best-effort khi lỗi giữa chừng, và đặt AGENTSOCIETY_QUESTIONNAIRE_TIMEOUT=600s cho từng agent trong questionnaire.",
+      "usage": "Bằng chứng C6, C11 và FLOW-03.",
+      "status": "verified_source",
+      "confidence": "high",
+      "limits": "Chưa chạy Ray cluster thực tế trong phiên kiểm toán.",
+      "verification_kind": "static_source"
+    },
+    {
+      "id": "EV-014",
+      "project": "agentsociety2",
+      "path": "packages/agentsociety2/agentsociety2/env/router_base.py",
+      "symbol": "RouterBase.init, step, from_workspaces, to_workspaces, acompletion_with_pydantic_validation",
+      "lines": "L179-L828",
+      "category": "env_router",
+      "finding": "RouterBase tách 2 dispatcher (coder/default), dùng ContextVar _trace_ctx cho truy vết đồng thời, đặt timeout 900s cho env module step (hủy sibling khi lỗi), strict restore mặc định (ENV_RESTORE_ALLOW_FRESH=False), và vòng lặp tự sửa JSON/Pydantic tới max_llm_call_retry=10.",
+      "usage": "Bằng chứng C1, C3, C8, C10, C11.",
+      "status": "verified_source",
+      "confidence": "high",
+      "limits": "Phân tích tĩnh.",
+      "verification_kind": "static_source"
+    },
+    {
+      "id": "EV-015",
+      "project": "agentsociety2",
+      "path": "packages/agentsociety2/agentsociety2/env/router_codegen.py",
+      "symbol": "CodeGenRouter, CodeStage._validate_code_safety, TemplateCacheDB, CacheCodeProvider",
+      "lines": "L169-L2580",
+      "category": "codegen_sandbox",
+      "finding": "CodeGenRouter chạy pipeline 4 giai đoạn (Init->Code->Summary->ObserveFinal), kiểm tra AST chặt (cấm dunder/eval/exec/dangerous modules, chèn deadline guards), dừng ngay không retry nếu write_attempted=True, và dùng FAISS IndexFlatIP + HMAC-SHA256 cache.pkl để tái sử dụng template code.",
+      "usage": "Bằng chứng C1, C7, C8, C9 và FLOW-02.",
+      "status": "verified_source",
+      "confidence": "high",
+      "limits": "Chưa thực thi codegen với LLM/FAISS thật.",
+      "verification_kind": "static_source"
+    },
+    {
+      "id": "EV-016",
+      "project": "agentsociety2",
+      "path": "packages/agentsociety2/agentsociety2/env/codegen_process.py",
+      "symbol": "Worker, WorkerPool, execute (and codegen_worker.py:main)",
+      "lines": "L39-L384",
+      "category": "sandbox",
+      "finding": "Process backend trên Linux chạy python -I -S codegen_worker.py trong TemporaryDirectory, đặt PR_SET_PDEATHSIG, PR_SET_NO_NEW_PRIVS, RLIMIT_AS (512 MiB), RLIMIT_CORE=0, RLIMIT_NOFILE=64, wall-clock timeout 10s và killpg(SIGKILL) khi lỗi; nhưng bị chặn trên non-Linux (Windows/macOS mặc định fallback inprocess).",
+      "usage": "Bằng chứng C9, C11 và FLOW-02.",
+      "status": "verified_source",
+      "confidence": "high",
+      "limits": "Kiểm toán trên Windows nên không thể chạy thực nghiệm Linux process worker.",
+      "verification_kind": "static_source"
+    },
+    {
+      "id": "EV-017",
+      "project": "agentsociety2",
+      "path": "packages/agentsociety2/agentsociety2/env/router_react.py",
+      "symbol": "ReActRouter.ask",
+      "lines": "L104-L408",
+      "category": "env_router",
+      "finding": "ReActRouter chạy vòng lặp tối đa max_steps=10 với tool set_status và phản hồi lỗi tool vào dialog; tuy nhiên chỉ truyền tools và tool_choice='auto' ở step_count==1, các bước sau truyền tools=None (L177-L185).",
+      "usage": "Bằng chứng C1 và phát hiện hạn chế trên ReActRouter.",
+      "status": "verified_source",
+      "confidence": "high",
+      "limits": "Cần kiểm chứng trên provider cụ thể xem việc bỏ tools ở lượt >=2 có ngăn gọi tool đa bước hay không.",
+      "verification_kind": "static_source"
+    },
+    {
+      "id": "EV-018",
+      "project": "agentsociety2",
+      "path": "packages/agentsociety2/agentsociety2/env/router_plan_execute.py",
+      "symbol": "PlanExecuteRouter.ask, _create_plan, _create_replan",
+      "lines": "L74-L611",
+      "category": "planning",
+      "finding": "PlanExecuteRouter sinh kế hoạch JSON qua LLM coder, thực thi từng bước chặn tại max_steps, và tự kích hoạt _create_replan (tối đa 3 lượt) khi gọi tool replan hoặc gặp lỗi tham số.",
+      "usage": "Bằng chứng C5.",
+      "status": "verified_source",
+      "confidence": "high",
+      "limits": "Thực thi tuần tự, không có DAG song song.",
+      "verification_kind": "static_source"
+    },
+    {
+      "id": "EV-019",
+      "project": "agentsociety2",
+      "path": "packages/agentsociety2/agentsociety2/env/env_router_proxy.py",
+      "symbol": "EnvRouterProxy._await_actor_call, create_env_router_proxy",
+      "lines": "L33-L260",
+      "category": "distributed_execution",
+      "finding": "Bọc EnvRouterActor qua Ray: chỉ bật max_concurrency=64 khi mọi env module is_concurrency_safe()==True (ngược lại=1); áp timeout theo thao tác (ask/step 900s, init/state 300s, close 60s) kèm ray.cancel; tuy nhiên set_current_time và set_replay_writer là fire-and-forget (L105-L121).",
+      "usage": "Bằng chứng C6, C11 và FLOW-02/FLOW-03.",
+      "status": "verified_source",
+      "confidence": "high",
+      "limits": "Phân tích tĩnh.",
+      "verification_kind": "static_source"
+    },
+    {
+      "id": "EV-020",
+      "project": "agentsociety2",
+      "path": "packages/agentsociety2/agentsociety2/society/society.py",
+      "symbol": "AgentSociety.init, step, _read_checkpoint, from_workspace",
+      "lines": "L608-L1046",
+      "category": "orchestration",
+      "finding": "AgentSociety điều phối mô phỏng không giữ object agent: ghi checkpoint 2 tệp (SOCIETY.json schema_version=2 bất biến và SOCIETY_STEP.json mỗi tick), đặt pending_update='tick' trước step_agent_batch(max_retries=0), xóa pending_update sau env_router.to_workspaces(), và từ chối resume nếu phát hiện pending_update!=None.",
+      "usage": "Bằng chứng C3, C6, C11 và FLOW-03.",
+      "status": "verified_source",
+      "confidence": "high",
+      "limits": "AskStep/QuestionnaireStep không đặt pending_update nên có thể chạy lại nếu crash trước mark_step_completed.",
+      "verification_kind": "static_source"
+    },
+    {
+      "id": "EV-021",
+      "project": "agentsociety2",
+      "path": "packages/agentsociety2/agentsociety2/society/cli.py",
+      "symbol": "main, _guard_fresh_run, ExperimentRunner",
+      "lines": "L48-L1145",
+      "category": "entrypoint",
+      "finding": "CLI entry agentsociety kiểm tra env sớm, chặn ghi đè run_dir cũ khi chưa có --overwrite, hỗ trợ --resume khôi phục seed từ run_manifest.json và bỏ qua các bước < completed_step_count (tính remaining cho RunStep đang dở).",
+      "usage": "Bằng chứng entry thực thi và FLOW-03.",
+      "status": "verified_source",
+      "confidence": "high",
+      "limits": "Chưa chạy CLI thật vì thiếu .venv và LLM API key.",
+      "verification_kind": "static_source"
+    },
+    {
+      "id": "EV-022",
+      "project": "agentsociety2",
+      "path": "packages/agentsociety2/agentsociety2/society/helper.py",
+      "symbol": "AgentSocietyHelper._run, _replan, _register_tools",
+      "lines": "L68-L1064",
+      "category": "planning",
+      "finding": "AgentSocietyHelper dùng Plan-and-Execute XML (max_steps=8, max_replans=2, 6 tools); nhưng trong _run() (L180-L183, L224), sau khi _replan() thay plan = new_plan (theo prompt 'DO NOT repeat SUCCESS steps', L724), step_index vẫn tính bằng len(execution_history) — nếu len(new_plan) <= len(execution_history) sẽ thoát sớm, còn nếu len(new_plan) > len(execution_history) sẽ nhảy cóc phần đầu new_plan. Tệp tests/test_society_helper_xml.py (L1-L155) chưa có test nào cho _run() hay _replan().",
+      "usage": "Bằng chứng C5 và phát hiện rủi ro/lỗi logic replan.",
+      "status": "verified_source",
+      "confidence": "high",
+      "limits": "Phát hiện qua truy vết tĩnh, chưa chạy test tái hiện vì thiếu litellm/elemental-xenon trong Python local.",
+      "verification_kind": "static_source"
+    },
+    {
+      "id": "EV-023",
+      "project": "agentsociety2",
+      "path": "packages/agentsociety2/agentsociety2/skills/analysis/harness/gates.py",
+      "symbol": "PHASE_VALIDATE_COMMAND, prior_phase_gate_issues (and cli.py, attestation.py, execution.py, review.py)",
+      "lines": "L21-L163",
+      "category": "analysis_harness",
+      "finding": "Analysis Harness là deterministic CLI harness (0 lời gọi LLM trong 29 tệp) phục vụ AI agent bên ngoài (Claude Code/Codex): cưỡng chế thứ tự pha (frame->explore->claims->refine->produce->synthesis) bằng cổng 2 lớp (structural validator + LLM attestation), SHA-256 chống stale, file lock/receipt chống trùng lặp, và luồng experience memory 4 bước (draft->feedback->review->promote).",
+      "usage": "Bằng chứng C3, C5, C8 và FLOW-04.",
+      "status": "verified_source",
+      "confidence": "high",
+      "limits": "Không import trực tiếp được qua package root vì analysis/__init__.py kéo duckdb.",
+      "verification_kind": "static_source"
+    },
+    {
+      "id": "EV-024",
+      "project": "agentsociety2",
+      "path": "packages/agentsociety2/agentsociety2/config/llm_dispatcher.py",
+      "symbol": "LLMClient, AdaptiveSemaphore, _acquire_shared_quota, ThinkingSettings",
+      "lines": "L58-L1080",
+      "category": "llm_dispatcher",
+      "finding": "LLMClient tạo LiteLLM Router per-event-loop hỗ trợ openai/anthropic, timeout 60s, max_retries=3 (fail-fast cho lỗi context limit, backoff mũ cho 429), điều tiết đồng thời AIMD (AdaptiveSemaphore), chuẩn hóa 5 format thinking/reasoning, và thống kê token (calls/input/output/cached_input); nhưng không cấu hình fallback model chain, không tính chi phí USD, và _acquire_shared_quota gọi import fcntl trực tiếp sẽ crash trên Windows nếu bật.",
+      "usage": "Bằng chứng C10, C11, C12 và các phát hiện giới hạn đa nền tảng.",
+      "status": "verified_source",
+      "confidence": "high",
+      "limits": "Phân tích tĩnh.",
+      "verification_kind": "static_source"
+    },
+    {
+      "id": "EV-025",
+      "project": "agentsociety2",
+      "path": "packages/agentsociety2/agentsociety2/trace/sharded_writer.py",
+      "symbol": "ShardedAppendSink, JsonlTraceWriter",
+      "lines": "L32-L395",
+      "category": "observability",
+      "finding": "Ghi trace OTel-compatible ra 256 shard JSONL với trace_id/span_id/parent_span_id (ContextVar), giới hạn 64 fd/sink và cắt giá trị dài; nhưng không fsync, không có file lock liên tiến trình trên Windows (fcntl=None), và nuốt OSError khi ghi.",
+      "usage": "Bằng chứng C10, C11.",
+      "status": "verified_source",
+      "confidence": "high",
+      "limits": "Phân tích tĩnh.",
+      "verification_kind": "static_source"
+    },
+    {
+      "id": "EV-026",
+      "project": "agentsociety2",
+      "path": "packages/agentsociety2/agentsociety2/storage/replay_sink.py",
+      "symbol": "ReplaySink, _file_lock, _merge_schema",
+      "lines": "L40-L267",
+      "category": "storage",
+      "finding": "ReplaySink ghi 256 shard JSONL dưới khóa file hỗ trợ cả POSIX fcntl và Windows msvcrt, ghi _schema.json nguyên tử (fsync+replace, backup nếu corrupt); nhưng _fds cache không có giới hạn eviction và dòng JSONL không fsync.",
+      "usage": "Bằng chứng C3, C10, C11.",
+      "status": "verified_source",
+      "confidence": "high",
+      "limits": "Phân tích tĩnh.",
+      "verification_kind": "static_source"
+    },
+    {
+      "id": "EV-027",
+      "project": "agentsociety2",
+      "path": "packages/agentsociety2/agentsociety2/skills/literature/mcp_client.py",
+      "symbol": "call_literature_mcp_tool, _list_literature_tool_names",
+      "lines": "L15-L209",
+      "category": "mcp",
+      "finding": "MCP client dùng Streamable HTTP (mcp SDK) với Bearer token tùy chọn và timeout 120s cho literature search; nhưng mỗi lần gọi mở 2 phiên HTTP/MCP riêng biệt liên tiếp (list_tools rồi call_tool), không có retry, và không nối vào vòng lặp simulation agent.",
+      "usage": "Bằng chứng C4, C7.",
+      "status": "verified_source",
+      "confidence": "high",
+      "limits": "Chưa gọi tới MCP server thực tế (https://llmapi.fiblab.net/mcp/).",
+      "verification_kind": "static_source"
+    },
+    {
+      "id": "EV-028",
+      "project": "agentsociety2",
+      "path": "packages/agentsociety2/agentsociety2/backend/app.py",
+      "symbol": "BackendAuthMiddleware, BrowserOriginMiddleware, TrustedHostMiddleware",
+      "lines": "L106-L300",
+      "category": "security",
+      "finding": "FastAPI backend mặc định bind 127.0.0.1:8001, có TrustedHost, BrowserOrigin chống CSRF và BackendAuthMiddleware (loopback-only khi không đặt BACKEND_TOKEN, hoặc 1 shared Bearer token dùng hmac.compare_digest); nhưng không có RBAC và trả JSONResponse trên scope websocket khi từ chối (L199, L214).",
+      "usage": "Bằng chứng C9.",
+      "status": "verified_source",
+      "confidence": "high",
+      "limits": "Phân tích tĩnh.",
+      "verification_kind": "static_source"
+    },
+    {
+      "id": "EV-029",
+      "project": "agentsociety2",
+      "path": "packages/agentsociety2/agentsociety2/backend/routers/custom.py",
+      "symbol": "POST /scan, POST /test (CustomModuleScanner, SafeModuleTester)",
+      "lines": "L121-L389",
+      "category": "security",
+      "finding": "Endpoint scan/test/list custom module gọi importlib spec.loader.exec_module() trực tiếp in-process trong FastAPI (backend/services/custom/scanner.py:L245, script_generator.py:L102, và registry/modules.py:L51 qua custom.py:L160,L406 và modules.py:L46,L59); script_generator.py:L183,L407 còn gọi cls(id=0, profile=...) mâu thuẫn với compatibility.py:L33,L230-L242 yêu cầu __init__() không tham số; backend/routers/agent_skills.py cho phép upload/create script không quét tĩnh; kiểm tra toàn bộ backend/routers/ xác nhận 0 WebSocket routes.",
+      "usage": "Bằng chứng C9 và phát hiện rủi ro bảo mật trọng yếu.",
+      "status": "verified_source",
+      "confidence": "high",
+      "limits": "Chỉ áp dụng cho file trong workspace được cấu hình WORKSPACE_PATH.",
+      "verification_kind": "static_source"
+    },
+    {
+      "id": "EV-030",
+      "project": "extension",
+      "path": "extension/src/extension.ts",
+      "symbol": "activate (BackendManager, AIChatInvoker, mcpServerManager)",
+      "lines": "L24-L168",
+      "category": "workbench",
+      "finding": "VS Code extension (ai-social-scientist v1.10.0) không tự chạy Agent Harness; đóng vai trò IDE workbench quản lý vòng đời FastAPI backend, kích hoạt AI coding agent bên ngoài (Claude Code/Codex/Cursor) và đồng bộ cấu hình MCP vào ~/.claude.json.",
+      "usage": "Bằng chứng phân tách trách nhiệm hệ thống (C4, C6).",
+      "status": "verified_source",
+      "confidence": "high",
+      "limits": "Không kiểm tra mã nguồn của Claude Code / Codex CLI bên ngoài.",
+      "verification_kind": "static_source"
+    },
+    {
+      "id": "EV-031",
+      "project": "agentsociety2",
+      "path": "packages/agentsociety2/agentsociety2/agent/base/workspace_fs.py",
+      "symbol": "WorkspaceFS.write_text, resolve (isolated fixture)",
+      "lines": "L84-L152",
+      "category": "verification",
+      "finding": "Kiểm chứng fixture cô lập trên Python 3.13.15 (TemporaryDirectory): write_text('notes.txt')=True, ghi '.runtime/secret.txt' bị chặn (runtime_blocked=True), resolve('../outside.txt') ném ValueError (escape_blocked=True).",
+      "usage": "Bằng chứng thực thi mức fixture cho C9 (cách ly workspace).",
+      "status": "verified_runtime",
+      "confidence": "high",
+      "limits": "Chỉ xác minh module WorkspaceFS độc lập trên Windows, không thay thế kiểm thử E2E.",
+      "verification_kind": "fixture"
+    },
+    {
+      "id": "EV-032",
+      "project": "agentsociety2",
+      "path": "packages/agentsociety2/agentsociety2/agent/memory.py",
+      "symbol": "AgentMemoryStore.ensure, read_memory_md (isolated fixture)",
+      "lines": "L1-L120",
+      "category": "verification",
+      "finding": "Kiểm chứng fixture cô lập trên Python 3.13.15 (TemporaryDirectory): AgentMemoryStore.ensure() khởi tạo MEMORY.md hợp lệ (283 ký tự) trên đĩa.",
+      "usage": "Bằng chứng thực thi mức fixture cho C3.",
+      "status": "verified_runtime",
+      "confidence": "high",
+      "limits": "Chỉ xác minh khởi tạo store cục bộ, chưa chạy LLM consolidation.",
+      "verification_kind": "fixture"
+    },
+    {
+      "id": "EV-033",
+      "project": "agentsociety2",
+      "path": "packages/agentsociety2/agentsociety2/backend/path_security.py",
+      "symbol": "resolve_workspace_root, resolve_under_root (isolated fixture)",
+      "lines": "L27-L81",
+      "category": "verification",
+      "finding": "Kiểm chứng fixture cô lập trên Python 3.13.15: resolve_workspace_root khớp WORKSPACE_PATH và resolve_under_root chặn '../etc/passwd' (traversal_blocked=True).",
+      "usage": "Bằng chứng thực thi mức fixture cho C9.",
+      "status": "verified_runtime",
+      "confidence": "high",
+      "limits": "Chưa kiểm tra FastAPI app end-to-end với HTTP/WebSocket.",
+      "verification_kind": "fixture"
+    },
+    {
+      "id": "EV-034",
+      "project": "agentsociety2",
+      "path": "packages/agentsociety2/tests/test_harness_guardrails.py",
+      "symbol": "77 pytest modules in packages/agentsociety2/tests/ (+ 3 in examples/v2/daily_mobility/tests/)",
+      "lines": "L1-L50",
+      "category": "test_harness",
+      "finding": "Kho mã có sẵn 77 tệp kiểm thử pytest trong packages/agentsociety2/tests/ (46 gốc, 22 tests/framework/, 9 tests/skills/) cộng 3 tệp ở examples/v2/daily_mobility/tests/, bao phủ ReAct loop, prompt cache, resume cursor, codegen isolation, shared quota, skill timeout, analysis harness guardrails và backend path security; chưa thể chạy cục bộ vì môi trường chưa cài uv/.venv/pytest/litellm/duckdb.",
+      "usage": "Bằng chứng tồn tại Test Harness (C8) và giới hạn thực thi môi trường kiểm toán.",
+      "status": "verified_source",
+      "confidence": "medium",
+      "limits": "Chưa thực thi pytest trong phiên kiểm toán này.",
+      "verification_kind": "static_source"
+    },
+    {
+      "id": "EV-035",
+      "project": "agentsociety2",
+      "path": "packages/agentsociety2/agentsociety2/env/router_two_tier_react.py",
+      "symbol": "TwoTierReActRouter._react_with_module (+ router_two_tier_plan_execute.py, router_search_tool.py)",
+      "lines": "L380-L391",
+      "category": "env_router",
+      "finding": "TwoTierReActRouter lặp lại y hệt lỗi tools_for_call = tools_with_status if react_steps == 1 else None (L380-L391) như ReActRouter; TwoTierPlanExecuteRouter không có vòng _replan hay Pydantic validation; ngược lại SearchToolRouter (router_search_tool.py:L209-L238) truyền tools đầy đủ ở mọi bước.",
+      "usage": "Bằng chứng bổ sung từ phản biện Vòng 2 (RV-001) cho Inventory, C1, C4, C5, F-006 và REC-04.",
+      "status": "verified_source",
+      "confidence": "high",
+      "limits": "Phân tích tĩnh mã nguồn.",
+      "verification_kind": "static_source"
+    },
+    {
+      "id": "EV-036",
+      "project": "agentsociety2",
+      "path": "packages/agentsociety2/agentsociety2/registry/modules.py",
+      "symbol": "_load_custom_class (+ backend/routers/modules.py, backend/services/custom/compatibility.py)",
+      "lines": "L27-L52",
+      "category": "security",
+      "finding": "registry/modules.py:_load_custom_class() gọi spec.loader.exec_module(module) trực tiếp in-process tại L51, được kích hoạt bởi POST /api/v1/custom/scan, GET /api/v1/custom/list, GET /api/v1/modules/agent_classes và society/cli.py:L570.",
+      "usage": "Bằng chứng bổ sung từ phản biện Vòng 2 (RV-002) cho C9, F-003 và REC-01.",
+      "status": "verified_source",
+      "confidence": "high",
+      "limits": "Phân tích tĩnh mã nguồn.",
+      "verification_kind": "static_source"
+    },
+    {
+      "id": "EV-037",
+      "project": "agentsociety2",
+      "path": "packages/agentsociety2/agentsociety2/society/questionnaire.py",
+      "symbol": "QuestionnaireRunner.run (+ skills/experiment/runner.py, skills/hypothesis/manager.py, extension/src/services/mcpClient.ts)",
+      "lines": "L243-L339",
+      "category": "orchestration",
+      "finding": "QuestionnaireRunner điều phối khảo sát song song nhiều agent (readonly=True, ép JSON 2 trường và retry riêng cho intention+choice); skills/experiment/runner.py & skills/hypothesis/manager.py quản lý chuẩn bị thí nghiệm/PID; env/base.py chỉ dùng mcp Tool/ToolManager làm JSON Schema builder (EnvMeta.__new__ không kế thừa @tool từ concrete subclass); extension/src/services/mcpClient.ts:L100-L161 triển khai HTTP JSON-RPC + SSE probe MCP.",
+      "usage": "Bằng chứng bổ sung từ phản biện Vòng 2 (RV-004) cho Inventory, C4, C6.",
+      "status": "verified_source",
+      "confidence": "high",
+      "limits": "Phân tích tĩnh mã nguồn.",
+      "verification_kind": "static_source"
+    },
+    {
+      "id": "EV-038",
+      "project": "agentsociety2",
+      "path": "packages/agentsociety2/agentsociety2/env/router_base.py",
+      "symbol": "RouterBase._llm_completion_span (+ env/benchmark.py)",
+      "lines": "L265-L322",
+      "category": "observability",
+      "finding": "RouterBase._llm_completion_span chỉ gắn 4 thuộc tính (operation.type, llm.model, llm.source, input.message_count ở L309-L314), thiếu toàn bộ llm.input_tokens/cached_input_tokens/output_tokens trên trace span phía env (dù society.py:L770-L830 có gom LLM_STATS.json); env/benchmark.py dài 13 dòng chỉ là DTO Pydantic chưa có benchmark harness tự động.",
+      "usage": "Bằng chứng bổ sung từ phản biện Vòng 2 (RV-005, RV-006) cho C10, F-007 và REC-05.",
+      "status": "verified_source",
+      "confidence": "high",
+      "limits": "Phân tích tĩnh mã nguồn.",
+      "verification_kind": "static_source"
+    }
+  ],
+  "findings": [
+    {
+      "id": "F-001",
+      "kind": "strength",
+      "title": "Kiến trúc Agent Harness phân lớp, tối ưu prompt-prefix cache và tách biệt trạng thái tốt",
+      "detail": "AgentBase/PersonAgent sở hữu trọn vẹn vòng lặp ReAct append-only không cắt đầu, json_block sort_keys=True, làm mới ngữ cảnh chọn lọc, và kiến trúc stateless Ray Tasks tách bộ nhớ driver khỏi số lượng tác tử N.",
+      "evidence_ids": [
+        "EV-005",
+        "EV-007",
+        "EV-008",
+        "EV-013",
+        "EV-020"
+      ],
+      "analysis": {
+        "type": "fact",
+        "mechanism": "Thread ReAct chỉ nối thêm tin nhắn trong suốt một step và tách khối hệ thống bất biến khỏi trạng thái biến thiên theo lượt; AgentSociety chỉ giữ agent_specs và phục dựng agent từ đĩa trong mỗi Ray Task.",
+        "impact": "Tăng tỷ lệ trúng prompt-prefix cache, tránh phình RAM ở driver khi mô phỏng quy mô lớn và bảo đảm tính bền vững trạng thái trên đĩa.",
+        "counterevidence": "Nếu một step kéo dài nhiều lượt với observation lớn, việc cấm cắt đầu thread có thể đẩy ngữ cảnh chạm giới hạn cửa sổ model (context limit fail-fast).",
+        "verification": "Đã xác minh qua mã nguồn (agent.py, person_prompt.py, runner.py); cần chạy benchmark E2E để đo tỷ lệ cache hit thực tế.",
+        "flow_ids": [
+          "FLOW-01",
+          "FLOW-03"
+        ],
+        "recommendation_ids": []
+      }
+    },
+    {
+      "id": "F-002",
+      "kind": "strength",
+      "title": "Cơ chế cổng 2 lớp và chống stale bằng SHA-256 trong Analysis Harness",
+      "detail": "Analysis Harness tách bạch hoàn toàn lớp cơ học xác định (0 lời gọi LLM) khỏi lớp phán đoán của AI agent bên ngoài, cưỡng chế thứ tự pha, xác nhận độc lập và trải nghiệm bộ nhớ 4 bước có kiểm soát.",
+      "evidence_ids": [
+        "EV-023"
+      ],
+      "analysis": {
+        "type": "fact",
+        "mechanism": "Mỗi chuyển pha đều kiểm tra structural validator, rubric attestation, và đối chiếu SHA-256 fingerprint của artifact trước khi cho phép advance hoặc release.",
+        "impact": "Ngăn AI agent bên ngoài nhảy cóc bước, tự chấm đỗ hoặc chỉnh sửa báo cáo sau khi đã qua phản biện.",
+        "counterevidence": "Vì tầng phán đoán vẫn do AI agent ngoài điền vào PhaseAttestation, một agent không trung thực vẫn có thể điền rubric hình thức nếu structural validator không phủ hết ngữ nghĩa.",
+        "verification": "Đã xác minh qua đọc toàn bộ 29 tệp trong skills/analysis/harness/; cần chạy test_harness_guardrails.py trong môi trường đủ dependency.",
+        "flow_ids": [
+          "FLOW-04"
+        ],
+        "recommendation_ids": []
+      }
+    },
+    {
+      "id": "F-003",
+      "kind": "weakness",
+      "title": "Backend và ModuleRegistry thực thi mã custom in-process không sandbox; lỗi contract test và upload skill không quét tĩnh",
+      "detail": "FastAPI endpoints (/custom/scan, /custom/test, /custom/list, /modules/agent_classes) và registry/modules.py:_load_custom_class() chạy importlib exec_module trực tiếp in-process (scanner.py:L245, script_generator.py:L102, registry/modules.py:L51); script_generator.py:L183,L407 gọi cls(id=0, profile=...) mâu thuẫn với compatibility.py yêu cầu __init__() không tham số; upload/create skill không quét tĩnh mã nguồn.",
+      "evidence_ids": [
+        "EV-028",
+        "EV-029",
+        "EV-036"
+      ],
+      "analysis": {
+        "type": "risk",
+        "mechanism": "CustomModuleScanner (scanner.py:L245), SafeModuleTester (script_generator.py:L102) và ModuleRegistry._load_custom_class (registry/modules.py:L51) đều gọi spec.loader.exec_module() trong tiến trình chính; khi không đặt BACKEND_TOKEN, mọi tiến trình local đều gọi được API. Lưu ý: toàn bộ backend/routers/ hiện có 0 WebSocket routes nên lỗi JSONResponse ở app.py:L199,L214 chỉ là phòng thủ.",
+        "impact": "Mã độc hoặc mã lỗi trong thư mục custom/ của workspace có thể thực thi tùy ý với quyền và biến môi trường (kể cả API key) của tiến trình Backend.",
+        "counterevidence": "Backend mặc định chỉ bind 127.0.0.1, có BrowserOriginMiddleware/TrustedHostMiddleware và giới hạn workspace qua WORKSPACE_PATH, nên rủi ro chủ yếu đến từ workspace không tin cậy hoặc tiến trình cục bộ khác.",
+        "verification": "Đã xác minh trực tiếp qua đọc mã nguồn app.py, routers/custom.py, scanner.py, script_generator.py và agent_skills.py.",
+        "flow_ids": [],
+        "recommendation_ids": [
+          "REC-01"
+        ]
+      }
+    },
+    {
+      "id": "F-004",
+      "kind": "weakness",
+      "title": "Lỗi logic chỉ số bước sau khi replan trong AgentSocietyHelper._run()",
+      "detail": "Khi _replan() trả về kế hoạch mới (chỉ chứa các bước còn lại theo prompt 'DO NOT repeat SUCCESS steps'), _run() vẫn lấy step_index = len(execution_history) đối chiếu với len(plan): nếu new_plan ngắn hơn/bằng sẽ thoát sớm, còn nếu dài hơn sẽ nhảy cóc phần đầu new_plan. Tệp tests/test_society_helper_xml.py chưa có test nào cho _run() hay _replan().",
+      "evidence_ids": [
+        "EV-022"
+      ],
+      "analysis": {
+        "type": "hypothesis",
+        "mechanism": "Prompt replan cấm lặp bước đã thành công (helper.py:L724), nhưng _run() gán plan = new_plan (L224) trong khi giữ step_index = len(execution_history) (L180-L183). Do đó cả 2 trường hợp len(new_plan) <= len(execution_history) (thoát sớm) lẫn len(new_plan) > len(execution_history) (nhảy cóc bước đầu) đều sai lệch so với hợp đồng prompt.",
+        "impact": "Các truy vấn ask()/intervene() gặp lỗi giữa chừng và kích hoạt replan có thể kết thúc thiếu bước thực thi, dẫn đến câu trả lời sai hoặc thiếu dữ liệu.",
+        "counterevidence": "Nếu LLM bỏ qua hướng dẫn prompt và lặp lại cả các bước cũ trong new_plan sao cho len(new_plan) > len(execution_history), lỗi thoát sớm sẽ không kích hoạt nhưng lại có nguy cơ chạy lệch bước.",
+        "verification": "Cần viết và chạy unit test mô phỏng _replan() trả về 1 bước mới khi execution_history đã có 2 bước (dự kiến xác nhận thoát sớm ở L181).",
+        "flow_ids": [],
+        "recommendation_ids": [
+          "REC-02"
+        ]
+      }
+    },
+    {
+      "id": "F-005",
+      "kind": "weakness",
+      "title": "Khoảng trống tương thích Windows và cô lập tiến trình (CodeGen sandbox, shared LLM quota, trace lock)",
+      "detail": "Process sandbox của CodeGenRouter chỉ hỗ trợ Linux (non-Linux chạy inprocess không giới hạn RAM OS); AGENTSOCIETY_SHARED_LLM_QUOTA gọi import fcntl trực tiếp gây crash trên Windows; ShardedAppendSink không khóa tệp liên tiến trình trên Windows.",
+      "evidence_ids": [
+        "EV-016",
+        "EV-024",
+        "EV-025"
+      ],
+      "analysis": {
+        "type": "risk",
+        "mechanism": "codegen_process.py:L226 chặn sys.platform != 'linux'; llm_dispatcher.py:L88 import fcntl không có fallback msvcrt; sharded_writer.py:L32 đặt fcntl=None trên Windows.",
+        "impact": "Trên Windows/macOS, code sinh bởi LLM không có bảo vệ RLIMIT_AS/killpg, bật shared quota sẽ gây ModuleNotFoundError, và ghi trace đa tiến trình có nguy cơ xen kẽ dòng.",
+        "counterevidence": "Tài liệu pyproject.toml và CLAUDE.md định vị production scale (Ray + process sandbox) chủ yếu trên Linux, nên một phần giới hạn trên Windows có thể là đánh đổi có chủ đích cho môi trường dev.",
+        "verification": "Đã xác minh qua mã nguồn; có thể kiểm nhanh bằng việc bật AGENTSOCIETY_SHARED_LLM_QUOTA=2 trên Windows.",
+        "flow_ids": [
+          "FLOW-02",
+          "FLOW-03"
+        ],
+        "recommendation_ids": [
+          "REC-03"
+        ]
+      }
+    },
+    {
+      "id": "F-006",
+      "kind": "weakness",
+      "title": "ReActRouter và TwoTierReActRouter đều bỏ truyền tools từ bước 2; LLMClient không cấu hình fallback chain",
+      "detail": "Cả ReActRouter.ask() (L176-L187) và TwoTierReActRouter._react_with_module() (L380-L391) chỉ truyền tools khi step==1 và đặt tools=None ở các bước sau (khác với SearchToolRouter truyền tools ở mọi bước). Riêng LLMClient._build_router chọn 1 model và num_retries=0 để kiểm soát backoff tập trung tại AdaptiveSemaphore (đánh đổi có chủ đích, thiếu fallback đa provider).",
+      "evidence_ids": [
+        "EV-017",
+        "EV-024",
+        "EV-035"
+      ],
+      "analysis": {
+        "type": "risk",
+        "mechanism": "Hai router ReAct đặt điều kiện step == 1 trước khi gán call_kwargs['tools']; trong khi LLMClient bỏ fallback ở tầng LiteLLM Router để giữ quyền điều tiết AIMD tập trung (khác với đường helper cũ Config.get_router).",
+        "impact": "ReActRouter có thể mất khả năng gọi tool từ lượt thứ 2 trở đi trên các provider OpenAI-compatible chuẩn; khi 1 endpoint LLM gặp sự cố kéo dài, simulation fail thay vì chuyển sang model dự phòng.",
+        "counterevidence": "Mặc định hệ thống dùng CodeGenRouter nên ReActRouter ít nằm trên đường chạy chính; việc LLMClient không dùng LiteLLM retry giúp kiểm soát backoff/quota tập trung tại AdaptiveSemaphore.",
+        "verification": "Cần chạy test tích hợp trên ReActRouter với kịch bản cần 2 lần gọi tool liên tiếp.",
+        "flow_ids": [
+          "FLOW-02"
+        ],
+        "recommendation_ids": [
+          "REC-04"
+        ]
+      }
+    },
+    {
+      "id": "F-007",
+      "kind": "weakness",
+      "title": "Thiếu chi phí USD, thiếu token trên trace span (AgentBase & RouterBase), không đếm drop trace và MCP client mở 2 phiên",
+      "detail": "SDK chưa tính chi phí USD; AgentBase._record_llm_usage thiếu output_tokens; RouterBase._llm_completion_span (L309-L314) thiếu toàn bộ trường token; ShardedAppendSink nuốt OSError không tăng bộ đếm drop; env/benchmark.py chỉ là DTO 13 dòng chưa có benchmark harness tự động; skills/literature/mcp_client.py mở 2 phiên HTTP/MCP liên tiếp cho mỗi lần gọi mà không có retry.",
+      "evidence_ids": [
+        "EV-005",
+        "EV-024",
+        "EV-025",
+        "EV-027",
+        "EV-038"
+      ],
+      "analysis": {
+        "type": "fact",
+        "mechanism": "LLMClient chỉ cộng dồn số token mà không quy đổi chi phí; AgentBase._record_llm_usage chỉ ghi input/cached_input/cache_hit_rate; call_literature_mcp_tool gọi _list_literature_tool_names rồi mở session thứ 2 để call_tool.",
+        "impact": "Khó kiểm soát ngân sách mô phỏng quy mô lớn theo từng bước/tác tử và tăng gấp đôi độ trễ khởi tạo kết nối khi tìm kiếm tài liệu qua MCP.",
+        "counterevidence": "LITELLM_LOCAL_MODEL_COST_MAP=True được bật để tránh gọi mạng tải bảng giá, phản ánh ưu tiên chạy offline/nội bộ hơn là tính giá tự động.",
+        "verification": "Đã xác minh trực tiếp qua mã nguồn llm_dispatcher.py, agent.py và mcp_client.py.",
+        "flow_ids": [
+          "FLOW-01"
+        ],
+        "recommendation_ids": [
+          "REC-05"
+        ]
+      }
+    },
+    {
+      "id": "F-008",
+      "kind": "weakness",
+      "title": "Lệch giữa dependency khai báo (mem0ai, tiktoken) với đường gọi thực tế và giới hạn fd ở ReplaySink",
+      "detail": "mem0ai và tiktoken nằm trong dependencies lõi của pyproject.toml nhưng PersonAgent không sử dụng (mem0ai chỉ có ở 1 contrib agent); ReplaySink._fds cache file descriptor không giới hạn eviction.",
+      "evidence_ids": [
+        "EV-003",
+        "EV-004",
+        "EV-011",
+        "EV-012",
+        "EV-026"
+      ],
+      "analysis": {
+        "type": "fact",
+        "mechanism": "PersonAgent tự quản lý bộ nhớ bằng AgentMemoryStore (MEMORY.md + episodes.jsonl); ReplaySink mở dần tới 256 shard/bảng trong self._fds mà không có chính sách FIFO eviction như ShardedAppendSink (64 fd).",
+        "impact": "Tăng kích thước cài đặt và bề mặt phụ thuộc thừa; mô phỏng có nhiều bảng replay trên hệ thống giới hạn ulimit -n thấp có thể gặp lỗi cạn file descriptor.",
+        "counterevidence": "Giữ mem0ai trong dependencies chính giúp các contrib agent (llm_donor_agent) chạy không cần cài extra; với số bảng replay nhỏ (<4 bảng), 256 shard vẫn dưới ngưỡng ulimit mặc định trên Linux.",
+        "verification": "Đã xác minh qua grep toàn bộ mã nguồn agentsociety2 và đọc replay_sink.py.",
+        "flow_ids": [
+          "FLOW-03"
+        ],
+        "recommendation_ids": [
+          "REC-06"
+        ]
+      }
+    },
+    {
+      "id": "F-009",
+      "kind": "unknown",
+      "title": "Chưa xác minh hành vi đầu-cuối (E2E), bộ 77 (+3) pytest và hiệu năng thực tế trên Ray cluster",
+      "detail": "Do môi trường kiểm toán cục bộ không có uv/.venv, thiếu các gói runtime (litellm, ray, faiss, mcp, duckdb, pytest) và không có LLM API key, toàn bộ 4 luồng đại diện mới chỉ dừng ở xác minh tĩnh và 3 fixture cô lập (0/77 tệp pytest trong agentsociety2/tests/ được thực thi).",
+      "evidence_ids": [
+        "EV-031",
+        "EV-032",
+        "EV-033",
+        "EV-034"
+      ],
+      "analysis": {
+        "type": "hypothesis",
+        "mechanism": "Thiếu môi trường chạy đã khóa (uv sync --locked) và thông tin xác thực LLM/MCP khiến không thể kích hoạt simulation loop, Ray actor concurrency hay Linux codegen worker.",
+        "impact": "Không thể kết luận Mức 4 hay khẳng định không có lỗi tích hợp/hồi quy lúc chạy thực tế; độ phủ E2E hiện là 0%.",
+        "counterevidence": "Kho mã có sẵn 46 tệp pytest và CI scope rõ ràng (AGENTS.md), cho thấy các bài kiểm thử tự động có thể chạy được ngay khi cung cấp đủ môi trường uv trên Linux.",
+        "verification": "Cần chạy `uv sync --locked --package agentsociety2 --no-default-groups --extra dev && cd packages/agentsociety2 && uv run pytest` cùng 1 kịch bản mô phỏng mẫu có LLM mock/thật trên Linux.",
+        "flow_ids": [
+          "FLOW-01",
+          "FLOW-02",
+          "FLOW-03",
+          "FLOW-04"
+        ],
+        "recommendation_ids": [
+          "REC-06"
+        ]
+      }
+    }
+  ],
+  "risks": [
+    {
+      "id": "RISK-01",
+      "title": "Thực thi mã tùy ý trong tiến trình FastAPI Backend khi scan/test custom module",
+      "impact": "high",
+      "likelihood": "medium",
+      "detail": "CustomModuleScanner và SafeModuleTester nạp trực tiếp file .py trong workspace bằng exec_module in-process; nếu mở workspace từ nguồn không tin cậy hoặc gọi API từ tiến trình cục bộ khác khi không đặt BACKEND_TOKEN, mã độc chạy với toàn quyền tiến trình backend.",
+      "evidence_ids": [
+        "EV-028",
+        "EV-029"
+      ]
+    },
+    {
+      "id": "RISK-02",
+      "title": "Thoát vòng lặp replan sớm trong AgentSocietyHelper làm sai lệch kết quả ask/intervene",
+      "impact": "medium",
+      "likelihood": "medium",
+      "detail": "Do step_index không được reset hoặc cộng bù sau khi thay plan mới bằng _replan(), các bước phục hồi mới có thể bị bỏ qua hoàn toàn.",
+      "evidence_ids": [
+        "EV-022"
+      ]
+    },
+    {
+      "id": "RISK-03",
+      "title": "Rủi ro ổn định và cô lập khi chạy trên Windows/macOS",
+      "impact": "medium",
+      "likelihood": "high",
+      "detail": "CodeGenRouter fallback sang inprocess (không có RLIMIT_AS/killpg), shared LLM quota crash do thiếu fcntl, và trace writer không khóa file liên tiến trình trên Windows.",
+      "evidence_ids": [
+        "EV-016",
+        "EV-024",
+        "EV-025"
+      ]
+    },
+    {
+      "id": "RISK-04",
+      "title": "Mất kiểm soát chi phí LLM và khó chẩn đoán token đầu ra trên mô phỏng lớn",
+      "impact": "medium",
+      "likelihood": "medium",
+      "detail": "Thiếu tính toán chi phí USD, thiếu output_tokens trên trace span và thiếu token budget chủ động trước khi gọi LLM.",
+      "evidence_ids": [
+        "EV-005",
+        "EV-024",
+        "EV-025"
+      ]
+    },
+    {
+      "id": "RISK-05",
+      "title": "Rò rỉ slot shared quota khi SIGKILL và cạn file descriptor ở ReplaySink",
+      "impact": "medium",
+      "likelihood": "low",
+      "detail": "Process chết đột ngột (SIGKILL) không nhả slot trong tệp shared quota; ReplaySink._fds giữ vô hạn fd đã mở theo shard/bảng.",
+      "evidence_ids": [
+        "EV-024",
+        "EV-026"
+      ]
+    }
+  ],
+  "recommendations": [
+    {
+      "id": "REC-01",
+      "title": "Cách ly việc scan/test custom module khỏi tiến trình FastAPI và sửa xử lý WebSocket auth",
+      "problem": "CustomModuleScanner (scanner.py:L245), SafeModuleTester (script_generator.py:L102) và registry/modules.py:_load_custom_class (L51) chạy exec_module in-process trong FastAPI; script_generator.py mâu thuẫn với compatibility.py về constructor không tham số; BackendAuthMiddleware trả JSONResponse cho scope WS (dù hiện có 0 WS routes).",
+      "impact": "Loại bỏ bề mặt thực thi mã không tin cậy trong tiến trình Backend và chuẩn hóa đóng kết nối WebSocket.",
+      "priority": "P0",
+      "solution": "Chuyển toàn bộ đường nạp/scan/test custom module (kể cả registry/modules.py khi gọi từ Backend API) sang subprocess ngắn hạn với whitelist env vars, đồng bộ contract khởi tạo trong script_generator.py với compatibility.py, và vệ sinh nhánh phòng thủ WS bằng websocket.close(code=1008).",
+      "component": "agentsociety2/backend/services/custom/, registry/modules.py & backend/app.py",
+      "reuse": "Tái sử dụng mẫu subprocess worker + ALLOWED_ENV_VARS của agent/base/skill_worker.py.",
+      "dependencies": [],
+      "acceptance": "POST /api/v1/custom/scan và /test chạy trong tiến trình con không kế thừa AGENTSOCIETY_LLM_API_KEY; kiểm thử WebSocket không có token đóng kết nối sạch bằng mã 1008 thay vì lỗi ASGI.",
+      "effort": "M",
+      "phase": "Pha 1 · Gia cố bảo mật & sửa lỗi đúng đắn",
+      "evidence_ids": [
+        "EV-028",
+        "EV-029",
+        "EV-036"
+      ],
+      "finding_ids": [
+        "F-003"
+      ]
+    },
+    {
+      "id": "REC-02",
+      "title": "Sửa logic con trỏ bước sau khi replan trong AgentSocietyHelper._run()",
+      "problem": "step_index vẫn dùng len(execution_history) sau khi thay plan = new_plan, khiến vòng lặp thoát sớm khi kế hoạch mới chỉ chứa các bước còn lại.",
+      "impact": "Bảo đảm cơ chế tự phục hồi replan của ask()/intervene() thực thi đủ các bước mới mà vẫn giữ trần max_steps.",
+      "priority": "P1",
+      "solution": "Tách biến plan_cursor (reset về 0 mỗi khi thay plan = new_plan) khỏi tổng số bước đã chạy len(execution_history) < self._max_steps.",
+      "component": "agentsociety2/society/helper.py",
+      "reuse": "Áp dụng cách tách con trỏ vòng trong/ngoài tương tự PlanExecuteRouter.",
+      "dependencies": [],
+      "acceptance": "Unit test với kịch bản lỗi ở bước 2 và _replan() trả về 1 bước mới phải thực thi được bước mới đó thay vì break sớm.",
+      "effort": "S",
+      "phase": "Pha 1 · Gia cố bảo mật & sửa lỗi đúng đắn",
+      "evidence_ids": [
+        "EV-022"
+      ],
+      "finding_ids": [
+        "F-004"
+      ]
+    },
+    {
+      "id": "REC-03",
+      "title": "Khắc phục tương thích đa nền tảng cho shared quota, trace lock và cảnh báo sandbox",
+      "problem": "Shared LLM quota gọi import fcntl trực tiếp gây crash trên Windows và dễ leak slot khi SIGKILL; ShardedAppendSink thiếu file lock trên Windows.",
+      "impact": "Đảm bảo hoạt động ổn định trên Windows và tránh treo hàng đợi quota sau crash tiến trình.",
+      "priority": "P1",
+      "solution": "Tái sử dụng _file_lock đa nền tảng (fcntl/msvcrt) từ replay_sink.py cho shared quota và trace writer; lưu danh sách PID+timestamp trong tệp quota để tự dọn slot của tiến trình đã chết.",
+      "component": "agentsociety2/config/llm_dispatcher.py & trace/sharded_writer.py",
+      "reuse": "Tái sử dụng trực tiếp _file_lock trong storage/replay_sink.py.",
+      "dependencies": [],
+      "acceptance": "Bật AGENTSOCIETY_SHARED_LLM_QUOTA=2 chạy qua trên Windows không crash; khi kill -9 một worker giữ slot, worker khác tự thu hồi slot hợp lệ.",
+      "effort": "M",
+      "phase": "Pha 2 · Tin cậy vận hành & đa nền tảng",
+      "evidence_ids": [
+        "EV-016",
+        "EV-024",
+        "EV-025",
+        "EV-026"
+      ],
+      "finding_ids": [
+        "F-005"
+      ]
+    },
+    {
+      "id": "REC-04",
+      "title": "Sửa truyền tools đa bước ở ReActRouter & TwoTierReActRouter và bổ sung tùy chọn fallback model cho LLMClient",
+      "problem": "Cả ReActRouter (L177) và TwoTierReActRouter (L381) bỏ tools từ bước >=2; LLMClient chưa hỗ trợ fallback model tùy chọn.",
+      "impact": "Đảm bảo ReActRouter gọi tool ổn định qua nhiều lượt và tăng độ sẵn sàng khi gọi LLM.",
+      "priority": "P2",
+      "solution": "Truyền tools nhất quán ở mọi bước của ReActRouter.ask(); cho phép LLMClient cấu hình danh sách model dự phòng tùy chọn qua biến môi trường.",
+      "component": "agentsociety2/env/router_react.py, router_two_tier_react.py & config/llm_dispatcher.py",
+      "reuse": "Tận dụng cấu trúc fallback đã có trong Config.get_router('coder').",
+      "dependencies": [],
+      "acceptance": "Test ReActRouter gọi 2 tool liên tiếp đạt PASS; test LLMClient chuyển sang model dự phòng khi model chính trả 503 liên tục.",
+      "effort": "S",
+      "phase": "Pha 2 · Tin cậy vận hành & đa nền tảng",
+      "evidence_ids": [
+        "EV-017",
+        "EV-024",
+        "EV-035"
+      ],
+      "finding_ids": [
+        "F-006"
+      ]
+    },
+    {
+      "id": "REC-05",
+      "title": "Bổ sung token/cost đầy đủ trên trace (AgentBase & RouterBase), đếm drop trace và gộp phiên Literature MCP client",
+      "problem": "AgentBase thiếu output_tokens, RouterBase._llm_completion_span thiếu 100% trường token, SDK chưa tính USD cost, ShardedAppendSink nuốt OSError không đếm drop, và mcp_client.py mở 2 phiên HTTP/MCP mỗi lần gọi không retry.",
+      "impact": "Minh bạch chi phí vận hành theo từng tác tử/bước và giảm một nửa độ trễ kết nối MCP.",
+      "priority": "P2",
+      "solution": "Ghi llm.output_tokens và ước tính cost (từ bảng giá cấu hình cục bộ) vào span và token stats; gộp list_tools + call_tool vào cùng một ClientSession trong mcp_client.py kèm retry có giới hạn.",
+      "component": "agentsociety2/agent/base/agent.py, env/router_base.py, trace/sharded_writer.py, skills/literature/mcp_client.py",
+      "reuse": "Mở rộng trực tiếp _record_llm_usage và _record_tokens hiện có.",
+      "dependencies": [],
+      "acceptance": "Trace JSONL xuất đầy đủ input/output/cached tokens và ước tính chi phí; mcp_client chỉ mở 1 phiên ClientSession cho mỗi lời gọi.",
+      "effort": "S",
+      "phase": "Pha 3 · Quan sát, dọn dẹp & kiểm chứng E2E",
+      "evidence_ids": [
+        "EV-005",
+        "EV-024",
+        "EV-025",
+        "EV-027",
+        "EV-038"
+      ],
+      "finding_ids": [
+        "F-007"
+      ]
+    },
+    {
+      "id": "REC-06",
+      "title": "Dọn dependency dư thừa, giới hạn fd ở ReplaySink và chạy kiểm chứng E2E trên Linux",
+      "problem": "mem0ai nằm ở dependency lõi dù chỉ dùng trong 1 contrib agent; ReplaySink._fds không có eviction; chưa có bằng chứng chạy pytest/E2E trên môi trường khóa.",
+      "impact": "Giảm rủi ro cạn fd, gọn gói cài đặt và xác lập bằng chứng vận hành E2E để đánh giá tiến lên Mức 4.",
+      "priority": "P2",
+      "solution": "Chuyển mem0ai sang optional-dependencies (contrib), áp dụng FIFO eviction cho ReplaySink._fds tương tự ShardedAppendSink, và chạy bộ 46 pytest + 1 kịch bản mô phỏng E2E trên môi trường Linux đã uv sync.",
+      "component": "packages/agentsociety2/pyproject.toml, storage/replay_sink.py, CI/Test environment",
+      "reuse": "Tái sử dụng cơ chế FIFO fd cache từ trace/sharded_writer.py.",
+      "dependencies": [
+        "REC-01",
+        "REC-02",
+        "REC-03"
+      ],
+      "acceptance": "77 tệp pytest trong packages/agentsociety2/tests/ (+ 3 tệp daily_mobility) PASS 100%, kiểm thử 4 luồng đại diện đạt E2E và ReplaySink giữ số fd mở dưới ngưỡng cấu hình.",
+      "effort": "M",
+      "phase": "Pha 3 · Quan sát, dọn dẹp & kiểm chứng E2E",
+      "evidence_ids": [
+        "EV-003",
+        "EV-012",
+        "EV-026",
+        "EV-034"
+      ],
+      "finding_ids": [
+        "F-008",
+        "F-009"
+      ]
+    }
+  ],
+  "capabilities": [
+    {
+      "id": "C1",
+      "name": "Vòng lặp thực thi",
+      "score": 3,
+      "status": "Tích hợp đầy đủ trên mã nguồn, chưa kiểm E2E",
+      "runtime": "Chưa xác minh runtime (thiếu .venv/LLM key)",
+      "notes": "AgentBase.run_react_loop và CodeGenRouter triển khai vòng lặp đa bước chặt chẽ (phản hồi tool, retry schema/code, dừng ngay khi write_attempted, fallback). Điểm trừ: 2/6 env routers (ReActRouter và TwoTierReActRouter) đều đặt tools=None từ bước >=2 và run_react_loop thiếu wall-clock timeout tổng.",
+      "gap": "ReActRouter và TwoTierReActRouter bỏ tools ở bước >=2; thiếu wall-clock timeout cấp vòng lặp ReAct.",
+      "evidence_ids": [
+        "EV-005",
+        "EV-007",
+        "EV-014",
+        "EV-015",
+        "EV-017",
+        "EV-035"
+      ],
+      "applicability": "applicable",
+      "implementation": "implemented",
+      "source_verification": "verified",
+      "runtime_verification": "not_verified",
+      "confidence": "high",
+      "fitness": {
+        "status": "partial",
+        "requirement": "Hỗ trợ vòng lặp tác tử LLM-native đa bước và nhiều mẫu suy luận (CodeGen, ReAct, Plan-Execute) theo README/CLAUDE.md.",
+        "evidence_ids": [
+          "EV-002",
+          "EV-005",
+          "EV-015"
+        ]
+      }
+    },
+    {
+      "id": "C2",
+      "name": "Kỹ thuật context",
+      "score": 3,
+      "status": "Tối ưu tốt cho prompt-prefix cache, thiếu token budget cứng",
+      "runtime": "Chưa xác minh runtime",
+      "notes": "Thread append-only, base_rules bất biến, json_block sort_keys=True, làm mới chọn lọc <todo_context>/<active_skills>, giới hạn đọc tệp 64 KiB và memory_context_max_chars. Điểm trừ: khai báo tiktoken nhưng chưa dùng để ép token budget chủ động trước khi gọi LLM.",
+      "gap": "Chưa có bộ đo và nén theo token budget chủ động (chỉ fail-fast khi provider báo vượt cửa sổ).",
+      "evidence_ids": [
+        "EV-003",
+        "EV-005",
+        "EV-007",
+        "EV-008",
+        "EV-024"
+      ],
+      "applicability": "applicable",
+      "implementation": "implemented",
+      "source_verification": "verified",
+      "runtime_verification": "not_verified",
+      "confidence": "high",
+      "fitness": {
+        "status": "met",
+        "requirement": "Quản lý ngữ cảnh ổn định, hỗ trợ prompt-prefix caching và tải skill theo metadata cho mô phỏng nhiều bước.",
+        "evidence_ids": [
+          "EV-002",
+          "EV-005",
+          "EV-008"
+        ]
+      }
+    },
+    {
+      "id": "C3",
+      "name": "Bộ nhớ và trạng thái",
+      "score": 3,
+      "status": "Bền vững trên workspace và checkpoint 2 tệp, đã kiểm fixture store",
+      "runtime": "Đã kiểm fixture cô lập cho AgentMemoryStore",
+      "notes": "Tách rõ trạng thái bất biến (config.json, SOCIETY.json) và trạng thái tiến độ (AGENT.json, MEMORY.md, episodes.jsonl, TODO.json, SOCIETY_STEP.json) ghi nguyên tử; Analysis Harness có experience memory 4 bước. Điểm trừ: mem0ai khai báo dependency lõi nhưng không dùng ở PersonAgent; AskStep/QuestionnaireStep thiếu cờ pending_update.",
+      "gap": "Dependency mem0ai dư thừa trên đường chính; AskStep/QuestionnaireStep chưa đánh dấu pending_update khi crash.",
+      "evidence_ids": [
+        "EV-003",
+        "EV-011",
+        "EV-012",
+        "EV-020",
+        "EV-023",
+        "EV-026",
+        "EV-032"
+      ],
+      "applicability": "applicable",
+      "implementation": "implemented",
+      "source_verification": "verified",
+      "runtime_verification": "fixture",
+      "confidence": "high",
+      "fitness": {
+        "status": "met",
+        "requirement": "Tác tử dạng bản ghi không trạng thái gắn workspace, có bộ nhớ dài/ngắn hạn và hỗ trợ --resume an toàn sau sự cố.",
+        "evidence_ids": [
+          "EV-002",
+          "EV-011",
+          "EV-020"
+        ]
+      }
+    },
+    {
+      "id": "C4",
+      "name": "Tool và MCP",
+      "score": 3,
+      "status": "Hệ thống tool nội bộ và skill runtime hoàn chỉnh; MCP chỉ ở tầng literature/IDE",
+      "runtime": "Chưa xác minh runtime",
+      "notes": "AgentBase hỗ trợ native tool call + text fallback, AgentSkillRuntime chạy custom skill qua skill_worker.py; EnvBase dùng mcp SDK làm JSON Schema builder nội bộ (EnvMeta.__new__ không kế thừa @tool của concrete subclass); giao thức MCP thực tế nằm ở skills/literature/mcp_client.py và extension/src/services/mcpClient.ts. Điểm trừ kỹ thuật: mcp_client.py mở 2 phiên HTTP/MCP liên tiếp mỗi lần gọi không retry, và 2 router ReAct đánh rơi tools từ bước >=2.",
+      "gap": "MCP client mở 2 session không retry; ReActRouter/TwoTierReActRouter bỏ tools từ bước >=2; EnvMeta không kế thừa @tool.",
+      "evidence_ids": [
+        "EV-006",
+        "EV-009",
+        "EV-010",
+        "EV-027",
+        "EV-030",
+        "EV-035",
+        "EV-037"
+      ],
+      "applicability": "applicable",
+      "implementation": "partial",
+      "source_verification": "verified",
+      "runtime_verification": "not_verified",
+      "confidence": "high",
+      "fitness": {
+        "status": "partial",
+        "requirement": "Hỗ trợ công cụ môi trường cắm nóng, skill mở rộng và tích hợp MCP theo README.",
+        "evidence_ids": [
+          "EV-002",
+          "EV-009",
+          "EV-027"
+        ]
+      }
+    },
+    {
+      "id": "C5",
+      "name": "Lập kế hoạch",
+      "score": 2,
+      "status": "Triển khai một phần, có lỗi logic con trỏ replan ở AgentSocietyHelper",
+      "runtime": "Chưa xác minh runtime",
+      "notes": "Có PlanExecuteRouter (plan + replan tối đa 3 lần), AgentSocietyHelper (XML plan + replan tối đa 2 lần), TodoStateStore trong PersonAgent và quy trình pha trong Analysis Harness. Điểm trừ: AgentSocietyHelper._run dùng step_index=len(execution_history) sau khi thay plan mới, dễ thoát sớm; chưa có DAG thực thi phụ thuộc song song.",
+      "gap": "Lỗi chỉ số step_index sau _replan() trong AgentSocietyHelper._run; chưa hỗ trợ DAG phụ thuộc.",
+      "evidence_ids": [
+        "EV-007",
+        "EV-018",
+        "EV-022",
+        "EV-023",
+        "EV-035"
+      ],
+      "applicability": "applicable",
+      "implementation": "partial",
+      "source_verification": "verified",
+      "runtime_verification": "not_verified",
+      "confidence": "high",
+      "fitness": {
+        "status": "partial",
+        "requirement": "Hỗ trợ mẫu Plan-Execute và lập kế hoạch/lập kế hoạch lại cho tương tác môi trường và can thiệp xã hội.",
+        "evidence_ids": [
+          "EV-002",
+          "EV-018",
+          "EV-022"
+        ]
+      }
+    },
+    {
+      "id": "C6",
+      "name": "Điều phối nhiều tác tử",
+      "score": 3,
+      "status": "Điều phối fan-out theo lô Ray Tasks và EnvRouterActor rõ ranh giới",
+      "runtime": "Chưa xác minh runtime",
+      "notes": "AgentSociety tách driver khỏi đối tượng agent, fan-out step_agent_batch/questionnaire_agent_batch theo batch_size=256, và điều phối truy cập EnvRouterActor theo cờ is_concurrency_safe (max_concurrency=64 hoặc 1). Điểm trừ: chưa có giao thức nhắn tin trực tiếp giữa các agent ngoài env module; set_current_time/set_replay_writer trên proxy là fire-and-forget.",
+      "gap": "Các lệnh đồng bộ thời gian/replay tới EnvRouterActor là fire-and-forget không chờ xác nhận.",
+      "evidence_ids": [
+        "EV-013",
+        "EV-019",
+        "EV-020",
+        "EV-030",
+        "EV-037"
+      ],
+      "applicability": "applicable",
+      "implementation": "implemented",
+      "source_verification": "verified",
+      "runtime_verification": "not_verified",
+      "confidence": "high",
+      "fitness": {
+        "status": "met",
+        "requirement": "Điều phối đồng thời quy mô lớn nhiều Silicon Participants qua Ray runtime và môi trường dùng chung.",
+        "evidence_ids": [
+          "EV-002",
+          "EV-013",
+          "EV-020"
+        ]
+      }
+    },
+    {
+      "id": "C7",
+      "name": "Tri thức và RAG",
+      "score": 2,
+      "status": "Có FAISS template cache và literature MCP, chưa có RAG tri thức nối vào Agent Harness",
+      "runtime": "Chưa xác minh runtime",
+      "notes": "FAISS IndexFlatIP được dùng làm template cache trong CodeGenRouter; skills/literature tìm bài báo qua MCP và lưu papers/ + literature_index.json; PersonAgent chỉ tìm kiếm từ khóa cục bộ trên episodes.jsonl. Chưa có pipeline RAG có rerank/citation/freshness nối vào vòng lặp PersonAgent; literature_index.json ghi không atomic.",
+      "gap": "Thiếu kết nối retrieval/RAG có kiểm soát vào vòng lặp tác tử mô phỏng; ghi literature_index.json không nguyên tử.",
+      "evidence_ids": [
+        "EV-011",
+        "EV-015",
+        "EV-027"
+      ],
+      "applicability": "applicable",
+      "implementation": "partial",
+      "source_verification": "verified",
+      "runtime_verification": "not_verified",
+      "confidence": "medium",
+      "fitness": {
+        "status": "partial",
+        "requirement": "Hỗ trợ truy xuất tài liệu học thuật và tái sử dụng mẫu/tri thức trong nghiên cứu và mô phỏng.",
+        "evidence_ids": [
+          "EV-002",
+          "EV-015",
+          "EV-027"
+        ]
+      }
+    },
+    {
+      "id": "C8",
+      "name": "Kiểm chứng và tự sửa",
+      "score": 3,
+      "status": "Mạnh ở tầng schema/AST/analysis gates và bộ 46 pytest, chưa chạy xác minh thực thi",
+      "runtime": "Chưa xác minh runtime (chưa chạy pytest)",
+      "notes": "Mạnh ở tầng thiết kế tĩnh (AgentBase schema retry, RouterBase Pydantic retry, CodeGenRouter AST + write_attempted guard, Analysis Harness cổng 2 lớp + SHA-256) và có 77 (+3) tệp pytest. Tuy nhiên chưa chạy được 0/77 tệp pytest trong môi trường kiểm toán và script_generator.py đang tự mâu thuẫn với compatibility.py về constructor không tham số.",
+      "gap": "Chưa thực thi bộ 77 (+3) pytest cục bộ; lỗi mâu thuẫn constructor trong SafeModuleTester (script_generator.py).",
+      "evidence_ids": [
+        "EV-005",
+        "EV-014",
+        "EV-015",
+        "EV-023",
+        "EV-029",
+        "EV-034"
+      ],
+      "applicability": "applicable",
+      "implementation": "implemented",
+      "source_verification": "verified",
+      "runtime_verification": "not_verified",
+      "confidence": "high",
+      "fitness": {
+        "status": "partial",
+        "requirement": "Đảm bảo đầu ra có cấu trúc, chống lỗi sinh code và có cổng kiểm chứng độc lập cho quy trình phân tích.",
+        "evidence_ids": [
+          "EV-002",
+          "EV-015",
+          "EV-023"
+        ]
+      }
+    },
+    {
+      "id": "C9",
+      "name": "An toàn và quản trị",
+      "score": 2,
+      "status": "Rào chắn workspace/Linux sandbox tốt nhưng Backend nạp code in-process và thiếu sandbox non-Linux",
+      "runtime": "Đã kiểm fixture cô lập cho WorkspaceFS và path_security",
+      "notes": "WorkspaceFS chặn thoát thư mục + .runtime/, _is_core_owned_workspace_path bảo vệ tệp lõi, CodeGenRouter có AST guard + Linux process sandbox (prctl/RLIMIT), skill_worker lọc biến môi trường, cache_integrity ký HMAC-SHA256, backend có Auth/Origin/TrustedHost/path_security. Tuy nhiên routers/custom.py chạy importlib exec_module in-process trong FastAPI, skill upload không quét tĩnh, CodeGen non-Linux chạy inprocess, và Auth không có RBAC / lỗi phản hồi WS.",
+      "gap": "Thực thi mã tùy chỉnh in-process trong FastAPI backend; thiếu sandbox tiến trình trên Windows/macOS; không có RBAC.",
+      "evidence_ids": [
+        "EV-006",
+        "EV-008",
+        "EV-009",
+        "EV-015",
+        "EV-016",
+        "EV-028",
+        "EV-029",
+        "EV-031",
+        "EV-033",
+        "EV-036"
+      ],
+      "applicability": "applicable",
+      "implementation": "partial",
+      "source_verification": "verified",
+      "runtime_verification": "fixture",
+      "confidence": "high",
+      "fitness": {
+        "status": "partial",
+        "requirement": "Thực thi an toàn code sinh bởi LLM, custom skills/modules và API quản trị cục bộ.",
+        "evidence_ids": [
+          "EV-002",
+          "EV-016",
+          "EV-028",
+          "EV-029"
+        ]
+      }
+    },
+    {
+      "id": "C10",
+      "name": "Quan sát và đánh giá",
+      "score": 2,
+      "status": "Có trace OTel sharded JSONL và replay DuckDB, nhưng thiếu cost USD, thiếu token phía RouterBase và chưa có benchmark harness",
+      "runtime": "Chưa xác minh runtime",
+      "notes": "JsonlTraceWriter truyền trace_id/span_id xuyên Ray actor, ReplaySink ghi 256 shard JSONL, LLMClient tổng hợp token vào LLM_STATS.json. Điểm trừ: không có theo dõi chi phí USD, AgentBase span thiếu output_tokens, RouterBase._llm_completion_span thiếu toàn bộ trường token, ShardedAppendSink thiếu file lock Windows và nuốt OSError không đếm drop, env/benchmark.py chỉ là DTO 13 dòng chưa có benchmark runner tự động.",
+      "gap": "Thiếu USD cost, thiếu token trên trace span (đặc biệt 100% ở RouterBase), không đếm drop trace khi OSError và thiếu benchmark runner.",
+      "evidence_ids": [
+        "EV-005",
+        "EV-014",
+        "EV-024",
+        "EV-025",
+        "EV-026",
+        "EV-038"
+      ],
+      "applicability": "applicable",
+      "implementation": "partial",
+      "source_verification": "verified",
+      "runtime_verification": "not_verified",
+      "confidence": "high",
+      "fitness": {
+        "status": "partial",
+        "requirement": "Cung cấp replay phân tán, truy vết đầy đủ và theo dõi hiệu năng/tài nguyên mô phỏng.",
+        "evidence_ids": [
+          "EV-002",
+          "EV-024",
+          "EV-025",
+          "EV-026"
+        ]
+      }
+    },
+    {
+      "id": "C11",
+      "name": "Tin cậy và mở rộng",
+      "score": 3,
+      "status": "Kiến trúc mở rộng Ray + AIMD + crash-safe checkpoint tốt, còn điểm gãy trên Windows và fd cache",
+      "runtime": "Chưa xác minh runtime",
+      "notes": "Ray Tasks không trạng thái, AdaptiveSemaphore AIMD, max_retries=0 tránh lặp side-effect, SOCIETY_STEP.json phát hiện crash bằng pending_update. Điểm trừ: AGENTSOCIETY_SHARED_LLM_QUOTA dùng fcntl trực tiếp gây crash trên Windows và dễ leak slot khi SIGKILL; ReplaySink._fds không có eviction; process sandbox chỉ chạy trên Linux.",
+      "gap": "Shared LLM quota không tương thích Windows và có rủi ro leak slot khi SIGKILL; ReplaySink._fds không giới hạn số fd mở.",
+      "evidence_ids": [
+        "EV-013",
+        "EV-016",
+        "EV-019",
+        "EV-020",
+        "EV-024",
+        "EV-025",
+        "EV-026"
+      ],
+      "applicability": "applicable",
+      "implementation": "partial",
+      "source_verification": "verified",
+      "runtime_verification": "not_verified",
+      "confidence": "high",
+      "fitness": {
+        "status": "partial",
+        "requirement": "Vận hành mô phỏng quy mô lớn tin cậy, kiểm soát tải LLM và phục hồi an toàn sau gián đoạn.",
+        "evidence_ids": [
+          "EV-002",
+          "EV-013",
+          "EV-020",
+          "EV-024"
+        ]
+      }
+    },
+    {
+      "id": "C12",
+      "name": "Độc lập model",
+      "score": 3,
+      "status": "Hỗ trợ đa giao thức OpenAI/Anthropic và 5 format thinking, thiếu fallback chain trong LLMClient",
+      "runtime": "Chưa xác minh runtime",
+      "notes": "LiteLLM Router tách vai trò default/coder/embedding, hỗ trợ openai Chat Completions và anthropic Messages, chuẩn hóa thinking/reasoning_effort, có text-parsed tool call fallback. Điểm trừ: LLMClient._build_router chỉ đăng ký 1 model (không có fallback chain như Config.get_router('coder')); nhiều trường Config đọc tĩnh lúc import.",
+      "gap": "LLMClient chưa hỗ trợ fallback chain giữa các model/provider khi gặp lỗi kéo dài.",
+      "evidence_ids": [
+        "EV-003",
+        "EV-004",
+        "EV-005",
+        "EV-024"
+      ],
+      "applicability": "applicable",
+      "implementation": "implemented",
+      "source_verification": "verified",
+      "runtime_verification": "not_verified",
+      "confidence": "high",
+      "fitness": {
+        "status": "met",
+        "requirement": "Hỗ trợ linh hoạt nhiều nhà cung cấp LLM (OpenAI/Anthropic/tương thích) và cấu hình theo vai trò.",
+        "evidence_ids": [
+          "EV-002",
+          "EV-024"
+        ]
+      }
+    }
+  ],
+  "scores": {
+    "overall": 66.67,
+    "assessed": 12,
+    "evidence_coverage_pct": 100.0,
+    "runtime_coverage_pct": 0.0,
+    "fitness_pct": 66.67,
+    "fitness_assessed": 12
+  },
+  "verification": {
+    "status": "partial_fixture_only",
+    "selected_flows": [
+      "FLOW-01",
+      "FLOW-02",
+      "FLOW-03",
+      "FLOW-04"
+    ],
+    "verified_flows": [],
+    "checks": [
+      {
+        "name": "Kiểm tra fixture cô lập WorkspaceFS (ghi/chặn .runtime/chặn path escape)",
+        "environment": "Windows, Python 3.13.15, TemporaryDirectory (không sửa mã nguồn)",
+        "result": "PASS: write_ok=True, runtime_blocked=True, escape_blocked=True",
+        "limits": "Chỉ xác minh module WorkspaceFS độc lập, không thay thế kiểm thử E2E.",
+        "evidence_ids": [
+          "EV-031"
+        ]
+      },
+      {
+        "name": "Kiểm tra fixture cô lập AgentMemoryStore (khởi tạo MEMORY.md)",
+        "environment": "Windows, Python 3.13.15, TemporaryDirectory",
+        "result": "PASS: memory_md_exists=True, md_len=283",
+        "limits": "Chỉ xác minh lưu trữ cục bộ, chưa gọi LLM consolidation.",
+        "evidence_ids": [
+          "EV-032"
+        ]
+      },
+      {
+        "name": "Kiểm tra fixture cô lập Backend path_security (chặn traversal)",
+        "environment": "Windows, Python 3.13.15, TemporaryDirectory",
+        "result": "PASS: root_matched=True, traversal_blocked=True",
+        "limits": "Chưa kiểm tra toàn bộ ứng dụng FastAPI và WebSocket.",
+        "evidence_ids": [
+          "EV-033"
+        ]
+      },
+      {
+        "name": "Kiểm tra khả năng chạy bộ 77 (+3) pytest & Analysis Harness CLI cục bộ",
+        "environment": "Windows, Python 3.13.15 (chưa cài uv/.venv)",
+        "result": "BLOCKED: thiếu pytest, litellm, ray, faiss-cpu, mcp, duckdb trong môi trường Python toàn cục",
+        "limits": "Không thể chạy xác minh E2E hay hồi quy tự động trong phiên kiểm toán này.",
+        "evidence_ids": [
+          "EV-034"
+        ]
+      }
+    ]
+  },
+  "review": {
+    "status": "completed",
+    "coverage": "Reviewer độc lập ở ngữ cảnh mới đã đối chiếu git snapshot, mã băm 2 tệp vòng một, tự lần trực tiếp mã nguồn trên society/helper.py, env/router_react.py, env/router_two_tier_react.py, env/router_search_tool.py, backend/services/custom/*, registry/modules.py, agent/person.py, agent/base/agent.py, society/society.py, env/router_base.py, trace/sharded_writer.py và rà soát toàn bộ 12 nhóm C1–C12 (phân biệt rõ kiểm chứng tĩnh và giới hạn chưa chạy runtime).",
+    "reviewer": "Subagent Reviewer Độc lập (conv:61f59359-9c42-404c-b4a5-419c53c97257)",
+    "model": "pro (khai báo qua invoke_subagent; host không lộ tên model chính xác để xác minh độc lập)",
+    "verdict": "Chấp nhận có điều chỉnh (Accept with revisions) — toàn bộ 7 điểm phản biện đã được tiếp thu vào bản cuối.",
+    "snapshot": "d:/PROJECTS/AgentSociety @ main (e7186aad430e, working tree clean)",
+    "reviewed_sha256": {
+      "Agent_Harness_Audit.md": "99fd0d57dbb14e6b03134edbef244d800de09773bbac58df0b888fc493f610be",
+      "Agent_Harness_Evidence.json": "11fe6129eef3ac9a4eea10a6cc0f0d9e7f123bf1a98c3f30c5aaddff9f68cac0"
+    },
+    "findings": [
+      {
+        "id": "RV-001",
+        "severity": "high",
+        "claim": "Vòng 1 bỏ sót 3 env routers (TwoTierReActRouter, TwoTierPlanExecuteRouter, SearchToolRouter) và bỏ sót lỗi anh em tools=None từ bước 2 trong TwoTierReActRouter.",
+        "counterevidence": "env/router_two_tier_react.py:L380-L391 lặp lại y hệt tools_for_call = tools_with_status if react_steps == 1 else None; env/router_search_tool.py:L209-L238 truyền tools ở mọi bước.",
+        "disposition": "accepted",
+        "response": "Đã bổ sung EV-035, cập nhật đủ 6 routers vào Inventory/Architecture và mở rộng F-006, REC-04, C1, C4 sang TwoTierReActRouter.",
+        "evidence_ids": [
+          "EV-017",
+          "EV-035"
+        ]
+      },
+      {
+        "id": "RV-002",
+        "severity": "high",
+        "claim": "F-003 trích nhầm dòng exec_module ở scanner.py, bỏ sót đường exec_module thứ 2 ở registry/modules.py:L51, bỏ sót lỗi contract script_generator.py và phóng đại bề mặt WebSocket (0 WS routes).",
+        "counterevidence": "scanner.py:L245 mới là exec_module; registry/modules.py:L51 chạy exec_module cho custom/scan, custom/list, modules/agent_classes, cli.py; script_generator.py:L183,L407 gọi cls(id=0, profile=...) trái compatibility.py:L33; 0 WS routes trong backend/routers/.",
+        "disposition": "accepted",
+        "response": "Đã sửa EV-029, thêm EV-036, mở rộng F-003 và REC-01 sang registry/modules.py và script_generator.py, đồng thời hạ hạng mục WebSocket auth xuống vệ sinh phòng thủ.",
+        "evidence_ids": [
+          "EV-028",
+          "EV-029",
+          "EV-036"
+        ]
+      },
+      {
+        "id": "RV-003",
+        "severity": "medium",
+        "claim": "F-004 mới nêu nhánh thoát sớm khi len(new_plan) <= len(execution_history), chưa nêu nhánh nhảy cóc phần đầu new_plan khi len(new_plan) > len(execution_history) và thiếu bằng chứng chưa có test _run()/_replan().",
+        "counterevidence": "society/helper.py:L180-L183, L224, L724; tests/test_society_helper_xml.py:L1-L155 chỉ có 6 test parse/dispatch, không có test _run()/_replan().",
+        "disposition": "accepted",
+        "response": "Đã bổ sung đầy đủ cả 2 chiều lỗi con trỏ replan và khoảng trống test vào EV-022 và F-004.",
+        "evidence_ids": [
+          "EV-022"
+        ]
+      },
+      {
+        "id": "RV-004",
+        "severity": "medium",
+        "claim": "Bỏ sót QuestionnaireRunner, skills/experiment/, skills/hypothesis/ và extension/src/services/mcpClient.ts; cần làm rõ EnvBase chỉ dùng mcp SDK làm schema builder.",
+        "counterevidence": "society/questionnaire.py:L243-L339, skills/experiment/runner.py, skills/hypothesis/manager.py, env/base.py:L53-L54,L343, extension/src/services/mcpClient.ts:L100-L161.",
+        "disposition": "accepted",
+        "response": "Đã thêm EV-037, cập nhật Inventory (Components & Frameworks.mcp) và mô tả C4/C6.",
+        "evidence_ids": [
+          "EV-037"
+        ]
+      },
+      {
+        "id": "RV-005",
+        "severity": "medium",
+        "claim": "EV-034 đếm thiếu tệp test (46 thay vì 77+3) và F-007 bỏ sót khoảng trống thiếu 100% trường token ở RouterBase._llm_completion_span cùng drop OSError ở ShardedAppendSink.",
+        "counterevidence": "packages/agentsociety2/tests/ có 77 tệp (46 gốc + 22 framework/ + 9 skills/) + 3 tệp daily_mobility; env/router_base.py:L265-L322 chỉ ghi 4 thuộc tính span không có token.",
+        "disposition": "accepted",
+        "response": "Đã cập nhật EV-034 thành 77 (+3) tệp pytest, thêm EV-038 và mở rộng F-007, REC-05, C10.",
+        "evidence_ids": [
+          "EV-034",
+          "EV-038"
+        ]
+      },
+      {
+        "id": "RV-006",
+        "severity": "medium",
+        "claim": "C1.fitness=met và C8.fitness=met quá cao so với lỗi đa router và 0/77 pytest chạy thực tế; C4 không nên trừ điểm vì MCP không nối agent loop (trái audit-method.md:L35); C10 nên cân nhắc 2/4.",
+        "counterevidence": "audit-method.md:L35, L44; lỗi ReActRouter/TwoTierReActRouter; 0/77 pytest chạy cục bộ; thiếu token ở RouterBase span và benchmark runner.",
+        "disposition": "accepted",
+        "response": "Đã hạ C1.fitness và C8.fitness xuống partial, sửa lập luận C4 sang khuyết tật kỹ thuật thực tế, hạ C10.score xuống 2/4 và tính lại toàn bộ scores (overall=66.67, fitness_pct=66.67).",
+        "evidence_ids": [
+          "EV-034",
+          "EV-035",
+          "EV-037",
+          "EV-038"
+        ]
+      },
+      {
+        "id": "RV-007",
+        "severity": "low",
+        "claim": "FLOW-01 cần nêu chính xác 5 action trong _REACT_PARALLEL_SAFE_ACTIONS và hành vi trả ok=True no-op cho core-owned path; F-006 cần tách lỗi bug khỏi đánh đổi thiết kế của LLMClient.",
+        "counterevidence": "agent/base/agent.py:L1393-L1401, L1543-L1553, L1662-L1670; config/llm_dispatcher.py:L422-L457.",
+        "disposition": "accepted",
+        "response": "Đã cập nhật chính xác chi tiết kỹ thuật trong EV-006, FLOW-01 và F-006.",
+        "evidence_ids": [
+          "EV-006",
+          "EV-024"
+        ]
+      }
+    ],
+    "closure": "Toàn bộ 7 mục phản biện (2 high, 4 medium, 1 low) đã được tiếp thu, cập nhật vào sổ bằng chứng và tính lại chỉ số; không còn mục mở."
+  },
+  "lessons": [
+    {
+      "title": "Không đánh đồng dependency khai báo trong pyproject.toml với đường chạy thực tế",
+      "detail": "mem0ai được khai báo ở dependencies lõi của agentsociety2 nhưng PersonAgent không hề import; việc kiểm chứng bằng grep và truy vết đường gọi giúp tránh kết luận sai về kiến trúc bộ nhớ.",
+      "evidence_ids": [
+        "EV-003",
+        "EV-011",
+        "EV-012"
+      ]
+    },
+    {
+      "title": "Tách rõ deterministic harness khỏi LLM agent bên ngoài",
+      "detail": "Analysis Harness có đầy đủ phase gates, attestation và experience memory nhưng hoàn toàn không gọi LLM (0 lời gọi trong 29 tệp) mà đóng vai trò rào kiểm soát cho AI agent bên ngoài.",
+      "evidence_ids": [
+        "EV-023",
+        "EV-030"
+      ]
+    }
+  ]
+}
