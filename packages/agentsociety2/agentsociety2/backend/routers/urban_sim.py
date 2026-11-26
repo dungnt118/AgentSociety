@@ -23,6 +23,7 @@ from agentsociety2.backend.path_security import (
     resolve_urban_sim_screenshot,
 )
 from agentsociety2.backend.services.urban_sim.competency import (
+    DEFAULT_MULBERRYLANE_RUBRIC,
     evaluate_run_competency,
     get_competency_audit_manager,
     render_competency_markdown,
@@ -2063,6 +2064,15 @@ def _persona_rows_to_fallback_dicts(personas: list[UrbanSimPersona]) -> list[dic
         }
         for p in personas
     ]
+
+
+@router.get("/rubric-default")
+async def get_default_rubric():
+    """Trả về chuẩn Rubric mặc định (MulberryLane / QLTN v2) làm Single Source of Truth cho Frontend."""
+    return {
+        "success": True,
+        "rubric": DEFAULT_MULBERRYLANE_RUBRIC.model_dump(),
+    }
 
 
 @router.get("/projects/{project_id}/runs/{run_id}/competency")

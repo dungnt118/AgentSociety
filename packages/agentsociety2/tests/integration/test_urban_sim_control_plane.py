@@ -3067,5 +3067,87 @@ def test_monitor_state_sim_clock_day_night_and_agent_activity_summary(tmp_path: 
         assert d2["sim_clock"]["elapsed_seconds"] >= 86400
 
 
+def test_rubric_default_endpoint_and_roundtrip(tmp_path: Path, monkeypatch):
+    """Verify GET /rubric-default exposes valid schema and PATCH project accepts custom rubric round-trip."""
+    monkeypatch.setenv("WORKSPACE_PATH", str(tmp_path))
+    headers = _client_headers(monkeypatch)
+    with TestClient(app, base_url="http://127.0.0.1:8001") as client:
+        # 1. Fetch default rubric from Single Source of Truth endpoint
+        r_def = client.get("/api/v1/urban-sim/rubric-default", headers=headers)
+        assert r_def.status_code == 200
+        body = r_def.json()
+        assert body["success"] is True
+        rubric = body["rubric"]
+        assert rubric["version"] == "1.0"
+        assert "BQL_DIRECTOR" in rubric["roles"]
+        assert "BQL_STAFF" in rubric["roles"]
+        assert len(rubric["roles"]) >= 8
+        assert len(rubric["quiz_questions"]) >= 6
+        first_q = rubric["quiz_questions"][0]
+        assert set(first_q["options"].keys()) == {"OPT_A", "OPT_B", "OPT_C", "OPT_D"}
+
+        # 2. Create project and verify default empty rubric -> PATCH custom rubric round-trip
+        create_res = client.post(
+            "/api/v1/urban-sim/projects",
+            json={
+                "slug": "rubric-roundtrip-proj",
+                "name": "Rubric Roundtrip Project",
+                "default_portal_url": "https://example.demego.vn",
+                "seed_mulberrylane_template": False,
+            },
+            headers=headers,
+        )
+        assert create_res.status_code == 200
+        pid = create_res.json()["project"]["id"]
+
+        custom_rubric = {
+            "version": "2026-06-v1",
+            "roles": {
+                "OPS_CUSTOM": {
+                    "role_code": "OPS_CUSTOM",
+                    "label": "Chuyên viên Vận hành Tòa nhà",
+                    "interaction_mode": "write_ops",
+                    "target_url_patterns": ["/ext/incidents", "/ext/tasks"],
+                    "expected_min_steps": 4,
+                    "min_actions_for_lostness": 3,
+                    "expected_target_modules_for_m3": 2,
+                }
+            },
+            "quiz_questions": [
+                {
+                    "id": "q_custom_01",
+                    "topic": "Quy trình tiếp nhận sự cố cư dân",
+                    "skill_domain": "INCIDENT_OPS",
+                    "prompt_stem": "Khi cư dân báo sự cố khẩn cấp, nhân sự cần truy cập phân hệ nào đầu tiên?",
+                    "options": {
+                        "OPT_A": "/ext/incidents",
+                        "OPT_B": "/ext/billing",
+                        "OPT_C": "/ext/parking",
+                        "OPT_D": "/home",
+                    },
+                    "correct_choice": "OPT_A",
+                }
+            ],
+        }
+        patch_res = client.patch(
+            f"/api/v1/urban-sim/projects/{pid}",
+            json={"competency_rubric_json": json.dumps(custom_rubric, ensure_ascii=False)},
+            headers=headers,
+        )
+        assert patch_res.status_code == 200
+        saved_json = patch_res.json()["project"]["competency_rubric_json"]
+        assert json.loads(saved_json)["roles"]["OPS_CUSTOM"]["label"] == "Chuyên viên Vận hành Tòa nhà"
+
+        # 3. Reset back to empty (revert to MulberryLane default)
+        reset_res = client.patch(
+            f"/api/v1/urban-sim/projects/{pid}",
+            json={"competency_rubric_json": ""},
+            headers=headers,
+        )
+        assert reset_res.status_code == 200
+        assert (reset_res.json()["project"]["competency_rubric_json"] or "") == ""
+
+
+
 
 

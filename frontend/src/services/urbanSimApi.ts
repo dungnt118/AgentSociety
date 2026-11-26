@@ -666,6 +666,37 @@ export function getZoneMapImageUrl(projectId: string, versionKey?: string): stri
     return versionKey ? `${base}?v=${encodeURIComponent(versionKey)}` : base;
 }
 
+export interface RubricRoleRule {
+    role_code: string;
+    label: string;
+    interaction_mode: "write_ops" | "oversight";
+    target_url_patterns: string[];
+    expected_min_steps: number;
+    min_actions_for_lostness: number;
+    expected_target_modules_for_m3: number;
+}
+
+export interface RubricQuizQuestion {
+    id: string;
+    topic: string;
+    skill_domain: string;
+    prompt_stem: string;
+    options: {
+        OPT_A: string;
+        OPT_B: string;
+        OPT_C: string;
+        OPT_D: string;
+        [key: string]: string;
+    };
+    correct_choice: "OPT_A" | "OPT_B" | "OPT_C" | "OPT_D";
+}
+
+export interface CompetencyRubricData {
+    version: string;
+    roles: Record<string, RubricRoleRule>;
+    quiz_questions: RubricQuizQuestion[];
+}
+
 export interface LlmConfigListItem {
     id: string;
     name: string;
@@ -931,5 +962,9 @@ export const urbanSimApi = {
         const filename = match?.[1] ? decodeURIComponent(match[1]) : `competency-${runId}.${ext}`;
         const blob = await resp.blob();
         return { blob, filename };
+    },
+    getDefaultRubric: async (): Promise<CompetencyRubricData> => {
+        const res = await requestJson<{ rubric: CompetencyRubricData }>(`${API_BASE}/rubric-default`);
+        return res.rubric;
     },
 };

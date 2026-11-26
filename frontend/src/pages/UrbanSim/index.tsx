@@ -33,11 +33,12 @@ import {
     message,
 } from "antd";
 import type { ColumnsType } from "antd/es/table";
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router";
 import {
     PreflightReport,
     urbanSimApi,
+    UrbanSimPersona,
     UrbanSimProjectSummary,
     UrbanSimRun,
     UrbanSimZone,
@@ -169,6 +170,7 @@ export default function UrbanSimConsolePage() {
     const [preflight, setPreflight] = useState<PreflightReport | null>(null);
     const [runs, setRuns] = useState<UrbanSimRun[]>([]);
     const [zones, setZones] = useState<UrbanSimZone[]>([]);
+    const [personas, setPersonas] = useState<UrbanSimPersona[]>([]);
     const [llmConfigs, setLlmConfigs] = useState<Array<{ id: string; name: string; modelLabel: string }>>([]);
     const [saving, setSaving] = useState(false);
     const [actionLoading, setActionLoading] = useState(false);
@@ -180,6 +182,18 @@ export default function UrbanSimConsolePage() {
     const watchedStartTimeIso = Form.useWatch("start_time_iso", form);
 
     const selectedProject = projects.find((p) => p.id === selectedId) || null;
+    const suggestedRoles = useMemo(() => {
+        const map = new Map<string, string>();
+        for (const p of personas) {
+            if (p.group_type === "BQL" && p.role_code && !map.has(p.role_code)) {
+                map.set(p.role_code, p.role_title || "");
+            }
+        }
+        return Array.from(map.entries()).map(([role_code, role_title]) => ({
+            role_code,
+            role_title,
+        }));
+    }, [personas]);
     const effectiveNumSteps = Number(watchedNumSteps ?? selectedProject?.num_steps ?? 0);
     const effectiveTickSeconds = Number(watchedTickSeconds ?? selectedProject?.tick_seconds ?? 0);
     const totalSimSeconds =
@@ -201,16 +215,18 @@ export default function UrbanSimConsolePage() {
     );
 
     const loadProjectDetails = useCallback(async (projectId: string) => {
-        const [projDetail, pf, runList, zoneRes] = await Promise.all([
+        const [projDetail, pf, runList, zoneRes, personaList] = await Promise.all([
             urbanSimApi.getProject(projectId),
             urbanSimApi.getPreflight(projectId),
             urbanSimApi.listRuns(projectId),
             urbanSimApi.listZones(projectId),
+            urbanSimApi.listPersonas(projectId).catch(() => []),
         ]);
         setProjects((prev) => prev.map((p) => (p.id === projectId ? projDetail : p)));
         setPreflight(pf);
         setRuns(runList);
         setZones(zoneRes.items || []);
+        setPersonas(personaList);
         form.setFieldsValue({
             name: projDetail.name,
             description: projDetail.description,
@@ -855,7 +871,7 @@ export default function UrbanSimConsolePage() {
                                             />
                                         </Form.Item>
                                     </Col>
-                                    <Col xs={24} md={10}>
+                                    <Col xs={24} md={24}>
                                         <Form.Item
                                             name="enable_competency_prepost_quiz"
                                             label={
@@ -888,33 +904,36 @@ export default function UrbanSimConsolePage() {
                                             <Switch checkedChildren="Bật Pre/Post" unCheckedChildren="Tắt" />
                                         </Form.Item>
                                     </Col>
-                                    <Col xs={24} md={14}>
+                                    <Col xs={24} md={24}>
                                         <Form.Item
                                             name="competency_rubric_json"
                                             label={
                                                 <span>
-                                                    Rubric phân hệ &amp; bộ câu hỏi tùy biến (JSON, &lt;= 64KB)
+                                                    Rubric phân hệ &amp; bộ câu hỏi tùy biến (&lt;= 64KB)
                                                     <FieldHelpPopover
-                                                        title="Cách cấu hình Rubric JSON & Bộ câu hỏi"
+                                                        title="Cách cấu hình Rubric Phân hệ & Bộ câu hỏi"
                                                         content={
                                                             <Space direction="vertical" size={6}>
                                                                 <div>
                                                                     Dùng để tùy biến <strong>quy chuẩn đánh giá từng vai trò BQL</strong> (<code>roles</code>) và <strong>ngân hàng câu hỏi Pre/Post Quiz</strong> (<code>quiz_questions</code>) cho dự án mới ngoài MulberryLane.
                                                                 </div>
                                                                 <div>
-                                                                    <strong>Nếu để trống:</strong> Dùng mặc định 7 vai trò MulberryLane (+ fallback <code>BQL_STAFF</code>) và 6 câu hỏi chuẩn QLTN v2.
+                                                                    <strong>Nếu để trống:</strong> Hệ thống tự nạp chuẩn mặc định MulberryLane (8 vai trò gồm fallback <code>BQL_STAFF</code> và 6 câu hỏi QLTN v2) từ Backend.
                                                                 </div>
                                                                 <div>
-                                                                    <strong>Mẹo nhanh:</strong> Bấm nút <strong>Chèn mẫu JSON</strong> hoặc <strong>Xem cấu trúc</strong> ngay trên thanh công cụ khung nhập để xem mô tả chi tiết từng trường và áp dụng mẫu sẵn.
+                                                                    <strong>Cấu hình trực quan &amp; Import/Export:</strong> Cho phép thêm/sửa vai trò và câu hỏi bằng bảng biểu trực quan đồng bộ 2 chiều với mã nguồn JSON hoặc Import/Export tệp <code>.json</code>.
                                                                 </div>
                                                             </Space>
                                                         }
                                                     />
                                                 </span>
                                             }
-                                            extra="Để trống để dùng chuẩn mặc định MulberryLane (7 role_code + fallback BQL_STAFF & 6 câu hỏi). Nếu tùy biến theo hệ thống mới, bấm 'Chèn mẫu JSON' hoặc 'Xem cấu trúc' ở thanh trên."
+                                            extra="Để trống để dùng chuẩn mặc định MulberryLane (đọc trực tiếp từ Backend). Bấm 'Tùy chỉnh từ chuẩn MulberryLane', 'Tạo Rubric trống' hoặc 'Import JSON' để thiết lập cho dự án khác."
                                         >
-                                            <RubricJsonEditor />
+                                            <RubricJsonEditor
+                                                projectSlug={selectedProject?.slug}
+                                                suggestedRoles={suggestedRoles}
+                                            />
                                         </Form.Item>
                                     </Col>
                                 </Row>
