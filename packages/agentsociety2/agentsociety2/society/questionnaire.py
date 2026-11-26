@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import re
 from collections.abc import Sequence
@@ -30,6 +31,8 @@ class Questionnaire(BaseModel):
     questionnaire_id: str = Field(..., min_length=1)
     title: str = ""
     description: str = ""
+    allow_env_tools: bool = True
+    retry_on_parse_error: bool = False
     questions: list[QuestionItem] = Field(..., min_length=1)
 
 
@@ -222,6 +225,8 @@ def _parse_question_answer(
                     parsed_value = answer_payload
             else:
                 parsed_value = loads_llm_json(answer_text, expect="any")
+            if not isinstance(parsed_value, (dict, list)):
+                raise ValueError("answer must be a valid JSON object or array")
         else:
             parsed_value = answer_text
     except Exception as exc:
@@ -278,25 +283,37 @@ class QuestionnaireRunner:
                 agents=selected_agents,
                 prompt=prompt,
                 t=t,
+                allow_env_tools=questionnaire.allow_env_tools,
             )
             answers = [_parse_question_answer(question, raw) for raw in raw_answers]
-            # 收集解析失败的 choice 题目，整体并行重试，而不是逐个 await。
-            needs_retry = intention_q and question.response_type == "choice"
+            # 收集解析失败的 choice / json 题目，整体并行重试，而不是逐个 await。
+            needs_retry = (intention_q and question.response_type == "choice") or (
+                questionnaire.retry_on_parse_error
+                and question.response_type in {"choice", "json"}
+            )
             retry_indices = [
                 idx
                 for idx, answer in enumerate(answers)
                 if needs_retry and not answer.parse_success
             ]
             if retry_indices:
-                retry_prompt = (
-                    prompt + "\n\nINVALID PREVIOUS ANSWER. Return JSON only with "
-                    '"answer" as exactly one listed option (copy verbatim) and a short "reason".'
-                )
+                if question.response_type == "json":
+                    retry_hint = (
+                        '\n\nINVALID PREVIOUS ANSWER. Return valid JSON ONLY with '
+                        '"reason" (short string) and "answer" (valid JSON object/array matching the exact requested keys).'
+                    )
+                else:
+                    retry_hint = (
+                        '\n\nINVALID PREVIOUS ANSWER. Return JSON only with '
+                        '"answer" as exactly one listed option (copy verbatim) and a short "reason".'
+                    )
+                retry_prompt = prompt + retry_hint
                 retry_agents = [selected_agents[idx] for idx in retry_indices]
                 retry_raws = await self._ask_agents(
                     agents=retry_agents,
                     prompt=retry_prompt,
                     t=t,
+                    allow_env_tools=questionnaire.allow_env_tools,
                 )
                 for idx, retry_raw in zip(retry_indices, retry_raws, strict=False):
                     answers[idx] = _parse_question_answer(question, retry_raw)
@@ -327,6 +344,7 @@ class QuestionnaireRunner:
         agents: Sequence[AgentBase],
         prompt: str,
         t: datetime,
+        allow_env_tools: bool = True,
     ) -> list[str]:
         """Ask every agent the same prompt through the standard ``ask`` interface.
 
@@ -335,5 +353,19 @@ class QuestionnaireRunner:
         is readonly so answering never mutates environment or workspace state.
         ``t`` is the authoritative simulation time so agents reason as of now.
         """
-        coroutines = [agent.ask(prompt, readonly=True, t=t) for agent in agents]
+        coroutines = []
+        for agent in agents:
+            kwargs: dict[str, Any] = {"readonly": True, "t": t}
+            if not allow_env_tools:
+                try:
+                    params = inspect.signature(agent.ask).parameters
+                    has_var_kw = any(
+                        p.kind == inspect.Parameter.VAR_KEYWORD
+                        for p in params.values()
+                    )
+                    if "allow_env_tools" in params or has_var_kw:
+                        kwargs["allow_env_tools"] = False
+                except (TypeError, ValueError):
+                    pass
+            coroutines.append(agent.ask(prompt, **kwargs))
         return list(await asyncio.gather(*coroutines))

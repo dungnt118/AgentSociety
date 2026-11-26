@@ -54,6 +54,7 @@ _EVAL_CACHE: OrderedDict[tuple[str, str, str], dict[str, Any]] = OrderedDict()
 
 QUIZ_PRE_ID = "bql_competency_pre"
 QUIZ_POST_ID = "bql_competency_post"
+DEBRIEF_QUESTIONNAIRE_ID = "bql_sociological_debrief"
 PRE_QUIZ_ID = QUIZ_PRE_ID
 POST_QUIZ_ID = QUIZ_POST_ID
 QUIZ_CHOICE_CODES = ["OPT_A", "OPT_B", "OPT_C", "OPT_D", "CHUA_BIET"]
@@ -344,6 +345,33 @@ def _build_default_mulberrylane_rubric() -> CompetencyRubricSchema:
             min_actions_for_lostness=3,
             expected_target_modules_for_m3=2,
         ),
+        "BQL_ACCOUNTANT": RoleRubricRule(
+            role_code="BQL_ACCOUNTANT",
+            label="Kế toán Công nợ & Phí dịch vụ (Hóa đơn, Phiếu thu & Đối soát)",
+            interaction_mode="write_ops",
+            target_url_patterns=[
+                "fee",
+                "phi",
+                "cong-no",
+                "billing",
+                "invoice",
+                "debt",
+                "receipt",
+                "payment",
+                "ke-toan",
+                "tai-chinh",
+                "phieu-thu",
+                "hoa-don",
+                "finance",
+                "accounting",
+                "thu-chi",
+                "gach-no",
+                "apartment",
+            ],
+            expected_min_steps=3,
+            min_actions_for_lostness=3,
+            expected_target_modules_for_m3=2,
+        ),
         "BQL_STAFF": RoleRubricRule(
             role_code="BQL_STAFF",
             label="Nhân sự BQL (Mặc định mở rộng)",
@@ -551,6 +579,62 @@ def build_quiz_question_items(rubric: CompetencyRubricSchema) -> tuple[list[dict
             "skill_domain": q.skill_domain,
         }
     return items, answer_key
+
+
+def build_sociological_debrief_questions() -> list[dict[str, Any]]:
+    """Tạo 3 câu hỏi Phỏng vấn Trải nghiệm Xã hội học Cuối ca (UMUX-Lite, SEQ, Workload Subset, D&M CSKH, CIT)."""
+    return [
+        {
+            "id": "q_debrief_metrics",
+            "response_type": "json",
+            "prompt": (
+                "Hãy đóng vai nhân sự BQL thật vừa kết thúc ca làm việc trên cổng QLTN. "
+                "Dựa CHỈ trên ký ức thực tế của bạn (MEMORY.md, notes/), hãy chấm điểm trung thực từ 1 đến 7 cho từng tiêu chí bên dưới.\n"
+                "LƯU Ý CHỐNG THIÊN LỆCH: Đừng chấm điểm cao để làm hài lòng hệ thống! Nếu trong ca bạn từng bấm lỗi, không tìm thấy menu hoặc hỏi CSKH chưa ra kết quả, hãy phản ánh đúng mức độ khó khăn thật.\n\n"
+                "Trả về công cụ finish với trường `answer` là một chuỗi JSON hợp lệ (hoặc object bên trong answer) đúng 7 khóa sau:\n"
+                "{\n"
+                '  "umux_capabilities": <số nguyên 1..7 — 1: hoàn toàn không đáp ứng công việc, 7: đáp ứng hoàn toàn>,\n'
+                '  "umux_ease": <số nguyên 1..7 — 1: rất khó dùng/rối, 7: rất dễ sử dụng>,\n'
+                '  "seq_ease": <số nguyên 1..7 — độ dễ tổng thể để hoàn thành các đầu việc được giao trong ca>,\n'
+                '  "workload_effort": <số nguyên 1..7 — mức độ phải gắng sức/mò mẫm (1: rất nhẹ nhàng, 7: cực kỳ vất vả)>,\n'
+                '  "workload_frustration": <số nguyên 1..7 — mức độ bực bội/ức chế khi vướng (1: không bực, 7: rất ức chế)>,\n'
+                '  "cskh_accuracy": <số nguyên 1..7 độ chính xác hướng dẫn CSKH khớp màn hình thật, HOẶC null nếu bạn chưa hỏi CSKH>,\n'
+                '  "cskh_helpfulness": <số nguyên 1..7 mức hữu ích giúp làm được việc của CSKH, HOẶC null nếu bạn chưa hỏi CSKH>\n'
+                "}"
+            ),
+        },
+        {
+            "id": "q_debrief_incidents",
+            "response_type": "json",
+            "prompt": (
+                "Theo Kỹ thuật Sự cố Nghiêm trọng (Critical Incident Technique — Flanagan 1954), "
+                "hãy liệt kê TỐI ĐA 3 lần bạn bị vướng, bực bội, thiếu hướng dẫn hoặc gặp lỗi giao diện trong ca làm việc vừa qua.\n"
+                "Tuyệt đối KHÔNG ghi thông tin cá nhân nhạy cảm của cư dân (SĐT, email, CCCD). Nếu cả ca trơn tru không có vướng mắc nào, trả về `{\"incidents\": []}`.\n\n"
+                "Trả về `answer` là JSON đúng cấu trúc:\n"
+                "{\n"
+                '  "incidents": [\n'
+                "    {\n"
+                '      "context_task": "<Bạn đang định làm nghiệp vụ gì?>",\n'
+                '      "screen_or_url": "<Tên màn hình hoặc URL đã mở>",\n'
+                '      "what_happened": "<Mô tả cụ thể điều gì bị lỗi/khó hiểu/mất thời gian>",\n'
+                '      "cskh_outcome": "<NOT_ASKED | HELPFUL | INCOMPLETE_OR_WRONG | NO_RESPONSE>",\n'
+                '      "root_cause_category": "<KNOWLEDGE_GAP | SOFTWARE_UX_BUG | WORKFLOW_FRICTION>",\n'
+                '      "severity": "<CRITICAL | MAJOR | MINOR>",\n'
+                '      "suggestion": "<Đề xuất cụ thể sửa giao diện phần mềm hoặc bổ sung vào kho tri thức CSKH>"\n'
+                "    }\n"
+                "  ]\n"
+                "}"
+            ),
+        },
+        {
+            "id": "q_debrief_reflection",
+            "response_type": "text",
+            "prompt": (
+                "Tóm tắt ngắn gọn (2–4 câu Tiếng Việt tự nhiên) cảm nhận thật của bạn sau ca đầu tiên dùng QLTN: "
+                "điều gì hài lòng nhất, điều gì gây cản trở nhất cho đúng vai trò của bạn, và 1 việc ưu tiên cần cải thiện ngay?"
+            ),
+        },
+    ]
 
 
 def normalize_model_family(model_name: str | None) -> str:
@@ -1214,6 +1298,395 @@ def _axis_cohort_stats(values: list[float | None], eligible_n: int) -> dict[str,
     }
 
 
+def _parse_likert_1_7(val: Any) -> float | None:
+    """Parse integer/float Likert rating in [1, 7]; reject booleans and out-of-range noise."""
+    if val is None or isinstance(val, bool):
+        return None
+    try:
+        num = float(val)
+    except (TypeError, ValueError):
+        return None
+    if math.isnan(num) or math.isinf(num):
+        return None
+    if num < 1.0 or num > 7.0:
+        return None
+    return round(num, 2)
+
+
+def _extract_debrief_tokens(text: str) -> list[str]:
+    clean = unicodedata.normalize("NFKC", str(text or "")).lower()
+    raw_tokens = re.findall(r"[a-z0-9_/-]{4,}", clean)
+    stop = {"http", "https", "mulberrylane", "sandbox", "demego", "chua", "khong", "phan"}
+    return [t for t in raw_tokens if t not in stop][:12]
+
+
+def _ground_cit_incident(
+    *,
+    incident: dict[str, Any],
+    agent_events: list[dict[str, Any]],
+    failed_web_attempts: list[dict[str, Any]],
+) -> tuple[str, list[dict[str, Any]]]:
+    """Match a CIT incident against observed agent events/failed web attempts (Behavioral Triangulation)."""
+    anchors: list[dict[str, Any]] = []
+    seen_seqs: set[tuple[int, str]] = set()
+    screen_raw = str(incident.get("screen_or_url") or "").strip()
+    norm_screen = normalize_url_for_lostness(screen_raw) if ("/" in screen_raw or "http" in screen_raw.lower()) else ""
+    tokens = _extract_debrief_tokens(f"{screen_raw} {incident.get('what_happened', '')} {incident.get('context_task', '')}")
+
+    # 1. Check structured urban_events (WEB + ATLAS)
+    for ev in agent_events:
+        stream = str(ev.get("stream") or "").upper()
+        if stream not in {"WEB", "ATLAS"}:
+            continue
+        details = ev.get("details") if isinstance(ev.get("details"), dict) else {}
+        ev_url = str(details.get("url") or details.get("observed_route_hint") or "").strip()
+        norm_ev_url = normalize_url_for_lostness(ev_url) if ev_url else ""
+        haystack = unicodedata.normalize(
+            "NFKC",
+            f"{ev_url} {ev.get('summary', '')} {details.get('target_text', '')} {details.get('question', '')}".lower(),
+        )
+        matched = False
+        if norm_screen and norm_screen != "/" and norm_ev_url and (norm_screen in norm_ev_url or norm_ev_url in norm_screen):
+            matched = True
+        elif not bool(ev.get("ok", True)):
+            matched = True
+        elif tokens and any(tok in haystack for tok in tokens):
+            matched = True
+
+        if matched:
+            seq_val = int(ev.get("seq") or 0)
+            key = (seq_val, stream)
+            if key in seen_seqs:
+                continue
+            seen_seqs.add(key)
+            anchors.append(
+                {
+                    "seq": seq_val,
+                    "stream": stream,
+                    "action": str(ev.get("action") or ""),
+                    "ok": bool(ev.get("ok", True)),
+                    "url": ev_url or None,
+                    "screenshot_path": ev.get("screenshot_path") or details.get("screenshot_path"),
+                    "summary": redact_sensitive_text(str(ev.get("summary") or ""))[:200],
+                }
+            )
+            if len(anchors) >= 3:
+                break
+
+    # 2. Fallback check failed web attempts in trace_*.jsonl
+    if len(anchors) < 3 and failed_web_attempts:
+        for fa in failed_web_attempts[:3]:
+            fa_text = str(fa.get("error") or "").lower()
+            if not tokens or any(tok in fa_text for tok in tokens) or len(anchors) == 0:
+                anchors.append(
+                    {
+                        "seq": 0,
+                        "stream": "TRACE_WEB_FAIL",
+                        "action": str(fa.get("action") or "ask_env"),
+                        "ok": False,
+                        "url": None,
+                        "screenshot_path": None,
+                        "summary": redact_sensitive_text(str(fa.get("error") or ""))[:200],
+                    }
+                )
+                if len(anchors) >= 3:
+                    break
+
+    if anchors:
+        return "VERIFIED_BY_LOG", anchors
+    return "UNGROUNDED_SELF_REPORT", []
+
+
+def _scan_and_evaluate_sociological_debrief(
+    *,
+    run_dir: Path,
+    agent_rows: list[dict[str, Any]],
+    per_agent_events: dict[int, list[dict[str, Any]]],
+    failed_web_by_agent: dict[int, list[dict[str, Any]]],
+) -> dict[str, Any]:
+    """Scan bql_sociological_debrief questionnaire + perform Behavioral Triangulation & CIT clustering."""
+    debrief_doc: dict[str, Any] | None = None
+    for fp in sorted(glob.glob(str(run_dir / "artifacts" / "questionnaire_step_*.json"))):
+        doc = _safe_read_json(Path(fp), max_bytes=4 * 1024 * 1024)
+        if str(doc.get("questionnaire_id") or "").strip() == DEBRIEF_QUESTIONNAIRE_ID:
+            debrief_doc = doc
+
+    if debrief_doc is None:
+        for row in agent_rows:
+            row["debrief"] = None
+        return {
+            "available": False,
+            "status": "NOT_AVAILABLE",
+            "respondents_n": 0,
+            "eligible_bql_n": len(agent_rows),
+            "parse_failures_count": 0,
+            "umux_lite_mean": None,
+            "seq_mean": None,
+            "workload_effort_mean_100": None,
+            "workload_frustration_mean_100": None,
+            "workload_subset_mean_100": None,
+            "cskh_quality_mean": None,
+            "cskh_valid_n": 0,
+            "cskh_all_failed_n": 0,
+            "bias_warnings_count": 0,
+            "cit_total_count": 0,
+            "cit_verified_count": 0,
+            "actionable_backlog": {
+                "knowledge_gaps": [],
+                "software_ux_bugs": [],
+                "workflow_frictions": [],
+            },
+        }
+
+    resp_by_aid: dict[int, dict[str, Any]] = {}
+    for resp in (debrief_doc.get("responses") or []):
+        if not isinstance(resp, dict) or resp.get("agent_id") is None:
+            continue
+        try:
+            aid = int(resp["agent_id"])
+        except (TypeError, ValueError):
+            continue
+        resp_by_aid[aid] = resp
+
+    umux_vals: list[float] = []
+    seq_vals: list[float] = []
+    eff_vals: list[float] = []
+    frust_vals: list[float] = []
+    subset_vals: list[float] = []
+    cskh_vals: list[float] = []
+    cskh_all_failed_n = 0
+    parse_failures_count = 0
+    bias_warnings_count = 0
+    respondents_n = 0
+
+    backlog: dict[str, list[dict[str, Any]]] = {
+        "knowledge_gaps": [],
+        "software_ux_bugs": [],
+        "workflow_frictions": [],
+    }
+    cit_total_count = 0
+    cit_verified_count = 0
+
+    sev_rank = {"CRITICAL": 0, "MAJOR": 1, "MINOR": 2}
+    valid_cskh_outcomes = {"NOT_ASKED", "HELPFUL", "INCOMPLETE_OR_WRONG", "NO_RESPONSE"}
+    valid_cats = {"KNOWLEDGE_GAP", "SOFTWARE_UX_BUG", "WORKFLOW_FRICTION"}
+
+    for row in agent_rows:
+        aid = int(row["agent_id"])
+        resp = resp_by_aid.get(aid)
+        if not resp:
+            row["debrief"] = None
+            continue
+
+        respondents_n += 1
+        answers_map: dict[str, dict[str, Any]] = {}
+        for ans in (resp.get("answers") or []):
+            if isinstance(ans, dict) and ans.get("question_id"):
+                answers_map[str(ans["question_id"])] = ans
+
+        metrics_ans = answers_map.get("q_debrief_metrics") or {}
+        inc_ans = answers_map.get("q_debrief_incidents") or {}
+        refl_ans = answers_map.get("q_debrief_reflection") or {}
+
+        agent_parse_fail = False
+        m_val = metrics_ans.get("parsed_value") if bool(metrics_ans.get("parse_success", True)) else None
+        if not isinstance(m_val, dict):
+            m_val = {}
+            agent_parse_fail = True
+
+        u_cap = _parse_likert_1_7(m_val.get("umux_capabilities"))
+        u_ease = _parse_likert_1_7(m_val.get("umux_ease"))
+        seq_ease = _parse_likert_1_7(m_val.get("seq_ease"))
+        w_eff = _parse_likert_1_7(m_val.get("workload_effort"))
+        w_frust = _parse_likert_1_7(m_val.get("workload_frustration"))
+        c_acc = _parse_likert_1_7(m_val.get("cskh_accuracy"))
+        c_help = _parse_likert_1_7(m_val.get("cskh_helpfulness"))
+
+        if u_cap is None or u_ease is None or seq_ease is None:
+            agent_parse_fail = True
+        if agent_parse_fail:
+            parse_failures_count += 1
+
+        # UMUX-Lite standard linear interpolation (Lah, Lewis & Sumak, IJHCI 2020)
+        umux_score: float | None = None
+        if u_cap is not None and u_ease is not None:
+            umux_score = round(((u_cap + u_ease - 2.0) / 12.0) * 100.0, 1)
+            umux_vals.append(umux_score)
+
+        if seq_ease is not None:
+            seq_vals.append(seq_ease)
+
+        # Raw NASA-TLX Workload Subset (Hart, 2006) — Effort & Frustration scaled 0..100
+        eff_100 = round(((w_eff - 1.0) / 6.0) * 100.0, 1) if w_eff is not None else None
+        frust_100 = round(((w_frust - 1.0) / 6.0) * 100.0, 1) if w_frust is not None else None
+        if eff_100 is not None:
+            eff_vals.append(eff_100)
+        if frust_100 is not None:
+            frust_vals.append(frust_100)
+        sub_parts = [v for v in (eff_100, frust_100) if v is not None]
+        workload_subset_100 = round(sum(sub_parts) / len(sub_parts), 1) if sub_parts else None
+        if workload_subset_100 is not None:
+            subset_vals.append(workload_subset_100)
+
+        # DeLone & McLean (2003/2016) CSKH Quality with Survivorship Bias protection
+        act = row.get("activity") or {}
+        atlas_total = int(act.get("atlas_asks_total") or 0)
+        atlas_ok = int(act.get("atlas_asks_ok") or 0)
+        cskh_quality: float | None = None
+        if atlas_total == 0:
+            cskh_status = "NO_CSKH_ASK"
+        elif atlas_ok == 0:
+            cskh_status = "CSKH_ALL_FAILED"
+            cskh_all_failed_n += 1
+        else:
+            c_parts = [v for v in (c_acc, c_help) if v is not None]
+            if c_parts:
+                cskh_quality = round(sum(c_parts) / len(c_parts), 2)
+                cskh_vals.append(cskh_quality)
+                cskh_status = "OK"
+            else:
+                cskh_status = "NO_RATING"
+
+        # Behavioral Triangulation (Denzin 1978; CHI/CSCW 2024-2025 Sycophancy/Acquiescence detection)
+        eff_metric = (row.get("metrics") or {}).get("effectiveness") or {}
+        eff_val = eff_metric.get("value")
+        cskh_conv_metric = (row.get("metrics") or {}).get("cskh_conversion") or {}
+        cskh_conv_val = cskh_conv_metric.get("value")
+        failed_web = int(act.get("failed_web_attempts") or 0)
+        miller_lvl = str(row.get("miller_level") or "M0")
+
+        bias_flags: list[str] = []
+        if umux_score is not None and umux_score >= 75.0:
+            if (
+                (eff_val is not None and float(eff_val) < 0.6)
+                or failed_web >= 2
+                or miller_lvl in {"M0", "M1"}
+            ):
+                bias_flags.append("ACQUIESCENCE_BIAS_WARNING")
+        if atlas_ok > 0 and cskh_conv_val is not None and float(cskh_conv_val) < 0.5:
+            if (c_acc is not None and c_acc >= 6.0) or (c_help is not None and c_help >= 6.0):
+                bias_flags.append("CSKH_POS_BIAS_WARNING")
+
+        if bias_flags:
+            bias_warnings_count += 1
+            for bf in bias_flags:
+                if bf not in row["flags"]:
+                    row["flags"].append(bf)
+
+        # Critical Incident Technique (Flanagan 1954) + PII Redaction + Log Grounding
+        raw_inc_payload = inc_ans.get("parsed_value") if bool(inc_ans.get("parse_success", True)) else None
+        raw_inc_list: list[Any] = []
+        if isinstance(raw_inc_payload, dict) and isinstance(raw_inc_payload.get("incidents"), list):
+            raw_inc_list = raw_inc_payload["incidents"]
+        elif isinstance(raw_inc_payload, list):
+            raw_inc_list = raw_inc_payload
+
+        parsed_incidents: list[dict[str, Any]] = []
+        for idx_inc, raw_it in enumerate(raw_inc_list[:3]):
+            if not isinstance(raw_it, dict):
+                continue
+            cat = str(raw_it.get("root_cause_category") or "WORKFLOW_FRICTION").strip().upper()
+            if cat not in valid_cats:
+                cat = "WORKFLOW_FRICTION"
+            sev = str(raw_it.get("severity") or "MAJOR").strip().upper()
+            if sev not in sev_rank:
+                sev = "MAJOR"
+            c_out = str(raw_it.get("cskh_outcome") or "NOT_ASKED").strip().upper()
+            if c_out not in valid_cskh_outcomes:
+                c_out = "NOT_ASKED"
+
+            cleaned_it = {
+                "incident_idx": idx_inc + 1,
+                "agent_id": aid,
+                "full_name": row["full_name"],
+                "role_code": row["role_code"],
+                "role_title": row["role_title"],
+                "context_task": redact_sensitive_text(str(raw_it.get("context_task") or ""))[:300],
+                "screen_or_url": redact_sensitive_text(str(raw_it.get("screen_or_url") or ""))[:200],
+                "what_happened": redact_sensitive_text(str(raw_it.get("what_happened") or ""))[:600],
+                "cskh_outcome": c_out,
+                "root_cause_category": cat,
+                "severity": sev,
+                "suggestion": redact_sensitive_text(str(raw_it.get("suggestion") or ""))[:500],
+            }
+            if not cleaned_it["what_happened"].strip():
+                continue
+
+            grounding_status, anchors = _ground_cit_incident(
+                incident=cleaned_it,
+                agent_events=per_agent_events.get(aid) or [],
+                failed_web_attempts=failed_web_by_agent.get(aid) or [],
+            )
+            cleaned_it["grounding_status"] = grounding_status
+            cleaned_it["evidence_anchors"] = anchors
+            parsed_incidents.append(cleaned_it)
+            cit_total_count += 1
+            if grounding_status == "VERIFIED_BY_LOG":
+                cit_verified_count += 1
+
+            if cat == "KNOWLEDGE_GAP":
+                backlog["knowledge_gaps"].append(cleaned_it)
+            elif cat == "SOFTWARE_UX_BUG":
+                backlog["software_ux_bugs"].append(cleaned_it)
+            else:
+                backlog["workflow_frictions"].append(cleaned_it)
+
+        raw_refl = refl_ans.get("parsed_value") or refl_ans.get("raw_text") or ""
+        reflection_vi = redact_sensitive_text(str(raw_refl).strip())[:1000]
+
+        row["debrief"] = {
+            "umux_capabilities": u_cap,
+            "umux_ease": u_ease,
+            "umux_lite_score": umux_score,
+            "seq_ease": seq_ease,
+            "workload_effort": w_eff,
+            "workload_frustration": w_frust,
+            "workload_effort_100": eff_100,
+            "workload_frustration_100": frust_100,
+            "workload_subset_100": workload_subset_100,
+            "cskh_accuracy": c_acc,
+            "cskh_helpfulness": c_help,
+            "cskh_quality": cskh_quality,
+            "cskh_status": cskh_status,
+            "bias_flags": bias_flags,
+            "incidents": parsed_incidents,
+            "reflection_vi": reflection_vi,
+            "parse_failed": agent_parse_fail,
+        }
+
+    for bucket_list in backlog.values():
+        bucket_list.sort(
+            key=lambda x: (
+                0 if x.get("grounding_status") == "VERIFIED_BY_LOG" else 1,
+                sev_rank.get(str(x.get("severity")), 2),
+                int(x.get("agent_id") or 0),
+            )
+        )
+
+    def _mean(vals: list[float], dec: int = 1) -> float | None:
+        return round(sum(vals) / len(vals), dec) if vals else None
+
+    return {
+        "available": True,
+        "status": "PARTIAL" if (respondents_n < len(agent_rows) or parse_failures_count > 0) else "COMPLETE",
+        "respondents_n": respondents_n,
+        "eligible_bql_n": len(agent_rows),
+        "parse_failures_count": parse_failures_count,
+        "umux_lite_mean": _mean(umux_vals, 1),
+        "seq_mean": _mean(seq_vals, 2),
+        "workload_effort_mean_100": _mean(eff_vals, 1),
+        "workload_frustration_mean_100": _mean(frust_vals, 1),
+        "workload_subset_mean_100": _mean(subset_vals, 1),
+        "cskh_quality_mean": _mean(cskh_vals, 2),
+        "cskh_valid_n": len(cskh_vals),
+        "cskh_all_failed_n": cskh_all_failed_n,
+        "bias_warnings_count": bias_warnings_count,
+        "cit_total_count": cit_total_count,
+        "cit_verified_count": cit_verified_count,
+        "actionable_backlog": backlog,
+    }
+
+
 def evaluate_run_competency(
     *,
     run_dir: Path,
@@ -1635,6 +2108,13 @@ def evaluate_run_competency(
             }
         )
 
+    sociological_debrief = _scan_and_evaluate_sociological_debrief(
+        run_dir=run_dir,
+        agent_rows=agent_rows,
+        per_agent_events=per_agent_events,
+        failed_web_by_agent=trace_info["failed_web_attempts"],
+    )
+
     eligible_n = len(agent_rows)
     cohort_summary = {
         "eligible_bql_n": eligible_n,
@@ -1671,10 +2151,11 @@ def evaluate_run_competency(
                 [r["quiz"]["pre_epistemic_honesty_rate"] for r in agent_rows], eligible_n
             ),
         },
+        "sociological_debrief": sociological_debrief,
     }
 
     report: dict[str, Any] = {
-        "schema_version": "1.0",
+        "schema_version": "1.1",
         "generated_at": _utcnow_iso(),
         "participant_source": participant_source,
         "guardrail_mode": guardrail_mode,
@@ -1682,18 +2163,25 @@ def evaluate_run_competency(
         "run_models": run_models,
         "run_model_families": run_model_families,
         "methodology": {
-            "framework": "Non-Compensatory Miller's Pyramid (M0..M4) + 4-Axis Orthogonal Profile Vector",
+            "framework": "Non-Compensatory Miller's Pyramid (M0..M4) + Behavioral Triangulation + Sociological Debrief",
             "references": [
                 "Kane (2006, 2013) — Conjunctive Non-Compensatory Validity",
                 "Kirkpatrick (1959/2016) — 4-Level Training Evaluation",
                 "Miller (1990) — Pyramid of Clinical/Operational Competence",
                 "ISO 9241-11 (2018) & Smith (1996) — Effectiveness & Bounded Lostness L_first",
+                "Lewis, Utesch & Maher (2013, 2015) & Lah, Lewis & Šumak (2020) — UMUX-Lite Linear Interpolation",
+                "Sauro & Dumas (2009) — Single Ease Question (SEQ)",
+                "Hart (2006) — Raw NASA-TLX Workload Subset (Effort & Frustration)",
+                "DeLone & McLean (2003, 2016) — System Quality vs Support Information Quality",
+                "Flanagan (1954) — Critical Incident Technique (CIT)",
+                "Denzin (1978) & CHI/CSCW (2024–2025 SimUser/UXAgent) — Behavioral Triangulation",
                 "Polson & Lewis (1992) — Cognitive Walkthrough 4-Stage Friction",
                 "Marx & Cummings (2007) — Normalized Change c & Epistemic Calibration",
                 "Zheng et al. (2023) — Rubric-Anchored G-Eval LLM-as-a-Judge",
             ],
         },
         "cohort_summary": cohort_summary,
+        "sociological_debrief": sociological_debrief,
         "agents": agent_rows,
         "excluded_agents": excluded_agents,
     }
@@ -2518,6 +3006,41 @@ def render_competency_markdown(
                 for it in items:
                     lines.append(
                         f"- **#{it.get('agent_id')} {it.get('full_name')}** — {it.get('title')}: {it.get('detail')}"
+                    )
+            lines.append("")
+
+    debrief = report.get("sociological_debrief") or cs.get("sociological_debrief") or {}
+    if debrief.get("available"):
+        lines.extend(
+            [
+                "## 4. Phỏng vấn Trải nghiệm Xã hội học Cuối ca (UMUX-Lite · SEQ · Workload Subset · D&M CSKH · CIT)",
+                "",
+                f"- **Số nhân sự BQL phản hồi:** {debrief.get('respondents_n', 0)}/{debrief.get('eligible_bql_n', 0)} (Lỗi parse: {debrief.get('parse_failures_count', 0)})",
+                f"- **UMUX-Lite TB (Lah et al. 2020):** {debrief.get('umux_lite_mean') if debrief.get('umux_lite_mean') is not None else 'N/A'} / 100",
+                f"- **SEQ Độ dễ tổng thể TB (Sauro & Dumas 2009):** {debrief.get('seq_mean') if debrief.get('seq_mean') is not None else 'N/A'} / 7",
+                f"- **Workload Subset TB (Hart 2006 — Effort & Frustration):** {debrief.get('workload_subset_mean_100') if debrief.get('workload_subset_mean_100') is not None else 'N/A'} / 100",
+                f"- **Chất lượng CSKH D&M TB:** {debrief.get('cskh_quality_mean') if debrief.get('cskh_quality_mean') is not None else 'N/A'} / 7 (Hợp lệ: {debrief.get('cskh_valid_n', 0)} | Hỏi lỗi 100%: {debrief.get('cskh_all_failed_n', 0)})",
+                f"- **Cảnh báo Thiên lệch chiều lòng (`ACQUIESCENCE/POS_BIAS`):** {debrief.get('bias_warnings_count', 0)} nhân sự",
+                f"- **Sự cố Nghiêm trọng (CIT — Flanagan 1954):** {debrief.get('cit_total_count', 0)} mục (Đã đối soát khớp log/ảnh: {debrief.get('cit_verified_count', 0)})",
+                "",
+            ]
+        )
+        backlog = debrief.get("actionable_backlog") or {}
+        for bkey, btitle in (
+            ("knowledge_gaps", "### 4.1 Lỗ hổng Tri thức CSKH Thần Nông"),
+            ("software_ux_bugs", "### 4.2 Điểm nghẽn / Lỗi UX Phần mềm QLTN"),
+            ("workflow_frictions", "### 4.3 Tắc nghẽn Quy trình & Phân quyền"),
+        ):
+            bitems = backlog.get(bkey) or []
+            lines.append(btitle)
+            if not bitems:
+                lines.append("- _Không ghi nhận sự cố nào._")
+            else:
+                for it in bitems:
+                    lines.append(
+                        f"- **[{it.get('severity')}] #{it.get('agent_id')} {it.get('full_name')}** "
+                        f"(`{it.get('grounding_status')}`, `{it.get('screen_or_url') or '-'}`): "
+                        f"{it.get('what_happened')} → Đề xuất: {it.get('suggestion') or '-'}"
                     )
             lines.append("")
 

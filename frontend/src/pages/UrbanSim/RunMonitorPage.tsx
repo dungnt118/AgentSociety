@@ -786,6 +786,7 @@ export default function RunMonitorPage() {
                                 </Title>
                                 <Tag color={STATUS_TAG_COLORS[run.status] || "default"}>{run.status}</Tag>
                                 {run.execution_phase === "PRE_QUIZ" && <Tag color="purple">Đang làm Pre-Quiz</Tag>}
+                                {run.execution_phase === "POST_DEBRIEF" && <Tag color="geekblue">Đang phỏng vấn cuối ca</Tag>}
                                 {run.execution_phase === "POST_QUIZ" && <Tag color="purple">Đang làm Post-Quiz</Tag>}
                                 <Tag>{run.pilot_mode ? "Pilot" : "Full"}</Tag>
                                 <Tag>{run.router_type}</Tag>

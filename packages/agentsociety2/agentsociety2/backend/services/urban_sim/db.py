@@ -41,6 +41,7 @@ class UrbanSimProject(SQLModel, table=True):
     pilot_mode: bool = True
     zone_map_image_rel: str | None = None
     llm_config_id: str | None = None
+    enable_sociological_debrief: bool = True
     enable_competency_prepost_quiz: bool = False
     competency_rubric_json: str | None = None
     created_at: str = Field(default_factory=_utcnow_iso)
@@ -162,6 +163,14 @@ def _ensure_urban_sim_migrations(engine) -> None:
                 text(
                     "ALTER TABLE urban_sim_projects "
                     "ADD COLUMN enable_competency_prepost_quiz INTEGER NOT NULL DEFAULT 0"
+                )
+            )
+            changed = True
+        if "enable_sociological_debrief" not in cols:
+            session.exec(
+                text(
+                    "ALTER TABLE urban_sim_projects "
+                    "ADD COLUMN enable_sociological_debrief INTEGER NOT NULL DEFAULT 1"
                 )
             )
             changed = True

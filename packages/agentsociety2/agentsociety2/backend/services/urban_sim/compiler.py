@@ -12,9 +12,11 @@ from typing import Any
 import yaml
 
 from agentsociety2.backend.services.urban_sim.competency import (
+    DEBRIEF_QUESTIONNAIRE_ID,
     QUIZ_POST_ID,
     QUIZ_PRE_ID,
     build_quiz_question_items,
+    build_sociological_debrief_questions,
     parse_or_default_rubric,
 )
 from agentsociety2.backend.services.urban_sim.crypto import (
@@ -41,7 +43,7 @@ Bạn là một nhân sự hoặc cư dân người Việt đang sống và làm
      - **Phản xạ Leo thang khi gặp sự cố (Failure-Escalation — áp dụng ở MỌI bước, kể cả khi đã có `notes/atlas_guides.md`):** Nếu gặp bất kỳ tình huống nào sau đây: (a) bấm hoặc tìm chức năng trên web thất bại (`ok=False`) sau 1–2 lần thử, (b) phần mềm báo không đủ quyền (`Bạn không có quyền xem...`) hoặc thiếu cấu hình biểu mẫu (`Không có loại phiếu`), hoặc (c) số liệu/danh sách trên màn hình mâu thuẫn bất thường (ví dụ badge báo `99+` nhưng bảng trống hoặc chỉ số mở bằng `0`), **KHÔNG dừng ở việc ghi chú thụ động** — hãy gọi ngay `ask_env(..., readonly=false, ctx={"attach_screenshot": true})` với `instruction="Nhắn hỏi Đội ngũ hỗ trợ / CSKH Thần Nông qua ask_atlas_support: <mô tả màn hình và vướng mắc vừa gặp>"` (trong hạn mức cho phép mỗi bước) để nhận hướng dẫn xử lý thực tế.
      - Kênh CSKH này đại diện cho Đội ngũ trợ lý của Thần Nông (có thể gồm cả chuyên viên người thật và trợ lý hỗ trợ), vì vậy phần `<câu hỏi tự nhiên>` hãy giao tiếp như người với người: đi thẳng vào vướng mắc thực tế trên màn hình; **TUYỆT ĐỐI CẤM** nhắc tên `"EvidenceAtlas"`, `"bot"` hay `"agent_id"`, **CẤM** thêm câu ra lệnh định dạng kiểu chatbot như `"Vui lòng trả lời ngắn gọn bằng tiếng Việt"` hay viết `"kèm ảnh chụp màn hình"` vào nội dung câu hỏi.
      - Đồng thời dùng **`click_web_text` (`readonly=false`)** (vd: `"Phiếu yêu cầu"`, `"Phản ánh qua App"`, `"Công việc"`, `"Công việc thực thi"`, `"Danh sách bãi đỗ"`, `"Việc chờ"`, `"Cư dân"`) để mở trực tiếp phân hệ thật trên QLTN thay vì dừng mãi ở `/home`.
-  3. Khi thấy sự vụ/tin nhắn từ Cư dân trong `observe_urban_inbox`: Lễ tân (`agent_id=3`) phải vừa kiểm tra/tạo phản ánh trên QLTN, vừa chuyển việc tới Kỹ thuật/An ninh qua `send_urban_message` (`readonly=false`) và phản hồi Cư dân ngay.
+  3. Khi thấy sự vụ/tin nhắn từ Cư dân trong `observe_urban_inbox`: Lễ tân (`agent_id=3`) phải vừa kiểm tra/tạo phản ánh trên QLTN, vừa chuyển việc tới Kỹ thuật / An ninh / Kế toán Công nợ (đối với phản ánh phí dịch vụ, hóa đơn, công nợ, gạch nợ) qua `send_urban_message` (`readonly=false`) và phản hồi Cư dân ngay. Đồng thời luôn đọc `building_context.scenario_brief` và `building_context.building_signals` trong `observe_urban_inbox` để nắm thực trạng chung của khu đô thị trong ca làm việc.
   4. Ghi nhớ quy trình học được qua `finish(memories=[...])` và/hoặc `write("notes/atlas_guides.md", ...)` — TUYỆT ĐỐI KHÔNG tự ý ghi/chỉnh trực tiếp `MEMORY.md`.
 - Nếu bạn là Cư dân Chủ hộ (`RESIDENT`, `software_access_enabled=false`): bạn KHÔNG có quyền truy cập phần mềm QLTN nội bộ hay kênh hỗ trợ CSKH nội bộ, và KHÔNG dùng bản đồ Bắc Kinh hay `story.yaml` cũ. Ở mỗi bước hãy gọi `observe_urban_inbox` (`readonly=True`), đọc `building_context.building_signals` và đối chiếu với ĐÚNG thông tin căn hộ, số nhân khẩu, biển số xe thật của bạn trong `<agent>` (tuyệt đối không bịa thêm xe nếu hồ sơ ghi 0 xe). Khi thấy trải nghiệm sự cố/bất tiện trực tiếp ảnh hưởng tới căn hộ hoặc xe thật của mình và `has_own_open_incident == false`, KHÔNG ĐƯỢC kết thúc lượt bằng "để lượt sau" — hãy gọi NGAY `ask_env(..., readonly=false)` dùng `report_resident_incident` (`recipient_agent_id=3`) hoặc `send_urban_message` gửi Lễ tân (`agent_id=3`) trong chính tick đó! Khi đã có sự vụ mở thì chỉ theo dõi/phản hồi tin mới từ Lễ tân.
 </identity>
@@ -180,11 +182,13 @@ def compile_run_from_db(
     except OSError:
         pass
 
+    scenario_brief = (getattr(project, "description", "") or "").strip()[:4000]
     env_modules: list[dict[str, Any]] = [
         {
             "module_type": "UrbanCommAndIncidentEnv",
             "kwargs": {
                 "project_name": project.name,
+                "scenario_brief": scenario_brief,
                 "personas": agent_directory,
                 "zones": zone_directory,
                 "bql_agent_ids": bql_ids,
@@ -345,48 +349,82 @@ def compile_run_from_db(
         "num_steps": int(max(1, project.num_steps)),
         "tick": int(max(60, project.tick_seconds)),
     }
-    compiled_steps: list[dict[str, Any]] = [run_step]
+    compiled_steps: list[dict[str, Any]] = []
 
+    enable_debrief = bool(getattr(project, "enable_sociological_debrief", True))
     enable_quiz = bool(getattr(project, "enable_competency_prepost_quiz", False))
+
+    quiz_items: list[dict[str, Any]] = []
+    answer_key: dict[str, dict[str, Any]] = {}
     if enable_quiz and software_ids:
         rubric = parse_or_default_rubric(getattr(project, "competency_rubric_json", None))
         quiz_items, answer_key = build_quiz_question_items(rubric)
-        if quiz_items:
-            compiled_steps = [
-                {
-                    "type": "questionnaire",
-                    "questionnaire_id": QUIZ_PRE_ID,
-                    "title": "Khảo sát Tri thức QLTN Ban đầu (Pre-Test — Tick 0)",
-                    "description": "Đánh giá nền tảng trước khi thực hành trên QLTN. Nếu chưa biết hãy chọn CHUA_BIET.",
-                    "target_agent_ids": list(software_ids),
-                    "questions": quiz_items,
-                },
-                run_step,
-                {
-                    "type": "questionnaire",
-                    "questionnaire_id": QUIZ_POST_ID,
-                    "title": "Khảo sát Tri thức QLTN Sau thực hành (Post-Test — Open-Notes Retrieval)",
-                    "description": "Đánh giá lại sau ca làm việc (chế độ Open-Notes Retrieval: được phép tra cứu trí nhớ và notes/ đã ghi chép).",
-                    "target_agent_ids": list(software_ids),
-                    "questions": quiz_items,
-                },
-            ]
-            quiz_key_path = (init_dir / "competency_quiz_key.json").resolve()
-            atomic_write_text(
-                quiz_key_path,
-                json.dumps(
-                    {
-                        "schema_version": "1.0",
-                        "pre_questionnaire_id": QUIZ_PRE_ID,
-                        "post_questionnaire_id": QUIZ_POST_ID,
-                        "assessment_mode": "OPEN_NOTES_RETRIEVAL",
-                        "target_agent_ids": list(software_ids),
-                        "questions": answer_key,
-                    },
-                    ensure_ascii=False,
-                    indent=2,
+
+    if enable_quiz and software_ids and quiz_items:
+        compiled_steps.append(
+            {
+                "type": "questionnaire",
+                "questionnaire_id": QUIZ_PRE_ID,
+                "title": "Khảo sát Tri thức QLTN Ban đầu (Pre-Test — Tick 0)",
+                "description": "Đánh giá nền tảng trước khi thực hành trên QLTN. Nếu chưa biết hãy chọn CHUA_BIET.",
+                "target_agent_ids": list(software_ids),
+                "allow_env_tools": False,
+                "retry_on_parse_error": True,
+                "questions": quiz_items,
+            }
+        )
+
+    compiled_steps.append(run_step)
+
+    # Đặt Phỏng vấn Trải nghiệm Xã hội học Cuối ca NGAY SAU run_step (trước Post-Quiz nếu bật cả hai)
+    # để thu nhận cảm nhận & điểm đau tự nhiên không bị chi phối bởi hiệu ứng làm bài trắc nghiệm.
+    if enable_debrief and software_ids:
+        debrief_items = build_sociological_debrief_questions()
+        compiled_steps.append(
+            {
+                "type": "questionnaire",
+                "questionnaire_id": DEBRIEF_QUESTIONNAIRE_ID,
+                "title": "Phỏng vấn Trải nghiệm Xã hội học Cuối ca (UMUX-Lite · SEQ · Workload · D&M CSKH · CIT)",
+                "description": (
+                    "Đánh giá trung thực trải nghiệm dùng phần mềm QLTN và kênh CSKH trong ca làm việc vừa qua. "
+                    "Hãy dựa vào đúng trí nhớ MEMORY.md và notes/ của bạn; nêu thẳng mọi bất cập thật để cải thiện sản phẩm."
                 ),
-            )
+                "target_agent_ids": list(software_ids),
+                "allow_env_tools": False,
+                "retry_on_parse_error": True,
+                "questions": debrief_items,
+            }
+        )
+
+    if enable_quiz and software_ids and quiz_items:
+        compiled_steps.append(
+            {
+                "type": "questionnaire",
+                "questionnaire_id": QUIZ_POST_ID,
+                "title": "Khảo sát Tri thức QLTN Sau thực hành (Post-Test — Open-Notes Retrieval)",
+                "description": "Đánh giá lại sau ca làm việc (chế độ Open-Notes Retrieval: được phép tra cứu trí nhớ và notes/ đã ghi chép).",
+                "target_agent_ids": list(software_ids),
+                "allow_env_tools": False,
+                "retry_on_parse_error": True,
+                "questions": quiz_items,
+            }
+        )
+        quiz_key_path = (init_dir / "competency_quiz_key.json").resolve()
+        atomic_write_text(
+            quiz_key_path,
+            json.dumps(
+                {
+                    "schema_version": "1.0",
+                    "pre_questionnaire_id": QUIZ_PRE_ID,
+                    "post_questionnaire_id": QUIZ_POST_ID,
+                    "assessment_mode": "OPEN_NOTES_RETRIEVAL",
+                    "target_agent_ids": list(software_ids),
+                    "questions": answer_key,
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+        )
 
     steps_yaml: dict[str, Any] = {
         "start_t": project.start_time_iso,

@@ -15,7 +15,7 @@ export interface UrbanSimRun {
     active_agent_count: number;
     pilot_mode: boolean;
     router_type: string;
-    execution_phase?: "PRE_QUIZ" | "SIMULATING" | "POST_QUIZ" | "DONE" | string;
+    execution_phase?: "PRE_QUIZ" | "SIMULATING" | "POST_DEBRIEF" | "POST_QUIZ" | "DONE" | string;
     current_sim_time?: string | null;
     total_tokens: number;
     total_cost_usd: number;
@@ -55,6 +55,7 @@ export interface UrbanSimProjectSummary {
     zone_map_image_rel: string | null;
     has_zone_map_image: boolean;
     llm_config_id?: string | null;
+    enable_sociological_debrief?: boolean;
     enable_competency_prepost_quiz?: boolean;
     competency_rubric_json?: string | null;
     stats: UrbanSimProjectStats;
@@ -473,6 +474,78 @@ export interface AgentCompetencyRow {
         episodes_count: number;
     };
     friction_tags: AgentFrictionTag[];
+    debrief?: AgentDebriefData | null;
+}
+
+export interface DebriefEvidenceAnchor {
+    seq: number;
+    stream: string;
+    action: string;
+    ok: boolean;
+    url: string | null;
+    screenshot_path: string | null;
+    summary: string;
+}
+
+export interface DebriefIncidentItem {
+    incident_idx: number;
+    agent_id: number;
+    full_name: string;
+    role_code: string;
+    role_title: string;
+    context_task: string;
+    screen_or_url: string;
+    what_happened: string;
+    cskh_outcome: string;
+    root_cause_category: "KNOWLEDGE_GAP" | "SOFTWARE_UX_BUG" | "WORKFLOW_FRICTION" | string;
+    severity: "S1_CRITICAL" | "S2_HIGH" | "S3_MEDIUM" | string;
+    suggestion: string;
+    grounding_status: "VERIFIED_BY_LOG" | "UNGROUNDED_SELF_REPORT" | string;
+    evidence_anchors: DebriefEvidenceAnchor[];
+}
+
+export interface AgentDebriefData {
+    umux_capabilities: number | null;
+    umux_ease: number | null;
+    umux_lite_score: number | null;
+    seq_ease: number | null;
+    workload_effort: number | null;
+    workload_frustration: number | null;
+    workload_effort_100: number | null;
+    workload_frustration_100: number | null;
+    workload_subset_100: number | null;
+    cskh_accuracy: number | null;
+    cskh_helpfulness: number | null;
+    cskh_quality: number | null;
+    cskh_status: "VALID" | "NO_CSKH_ASK" | "CSKH_ALL_FAILED" | string;
+    bias_flags: string[];
+    incidents: DebriefIncidentItem[];
+    reflection_vi: string;
+    parse_failed: boolean;
+}
+
+export interface SociologicalDebriefSummary {
+    available: boolean;
+    status: "NOT_AVAILABLE" | "PARTIAL" | "COMPLETE" | string;
+    respondents_n: number;
+    eligible_bql_n: number;
+    parse_failures_count: number;
+    umux_lite_mean: number | null;
+    seq_mean: number | null;
+    workload_effort_mean_100: number | null;
+    workload_frustration_mean_100: number | null;
+    workload_subset_mean_100: number | null;
+    cskh_quality_mean: number | null;
+    cskh_valid_n: number;
+    cskh_all_failed_n: number;
+    bias_warnings_count: number;
+    cit_total_count: number;
+    cit_verified_count: number;
+    actionable_backlog: {
+        knowledge_gaps: DebriefIncidentItem[];
+        software_ux_bugs: DebriefIncidentItem[];
+        workflow_frictions: DebriefIncidentItem[];
+    };
 }
 
 export interface ExcludedAgentInfo {
@@ -517,7 +590,9 @@ export interface CompetencyReport {
             post_avg_pct: AxisCohortStat;
             epistemic_honesty_avg: AxisCohortStat;
         };
+        sociological_debrief?: SociologicalDebriefSummary;
     };
+    sociological_debrief?: SociologicalDebriefSummary;
     agents: AgentCompetencyRow[];
     excluded_agents: ExcludedAgentInfo[];
 }
@@ -966,5 +1041,17 @@ export const urbanSimApi = {
     getDefaultRubric: async (): Promise<CompetencyRubricData> => {
         const res = await requestJson<{ rubric: CompetencyRubricData }>(`${API_BASE}/rubric-default`);
         return res.rubric;
+    },
+    getScenarioBriefTemplate: async (): Promise<string> => {
+        const res = await requestJson<{ template: string }>(`${API_BASE}/scenario-brief-template`);
+        return res.template || "";
+    },
+    syncAccountingPersona: async (
+        projectId: string
+    ): Promise<{ created: boolean; persona: UrbanSimPersona }> => {
+        return requestJson<{ created: boolean; persona: UrbanSimPersona }>(
+            `${API_BASE}/projects/${encodeURIComponent(projectId)}/sync-accounting-persona`,
+            { method: "POST" }
+        );
     },
 };

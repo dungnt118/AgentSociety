@@ -78,6 +78,7 @@ export default function PersonaMatrixPage() {
     const [drawerOpen, setDrawerOpen] = useState(false);
     const [editing, setEditing] = useState<UrbanSimPersona | null>(null);
     const [saving, setSaving] = useState(false);
+    const [syncingAccounting, setSyncingAccounting] = useState(false);
     const [form] = Form.useForm<PersonaFormValues>();
 
     const reloadData = useCallback(async () => {
@@ -221,6 +222,24 @@ export default function PersonaMatrixPage() {
         }
     };
 
+    const handleSyncAccountingPersona = async () => {
+        if (!projectId) return;
+        setSyncingAccounting(true);
+        try {
+            const res = await urbanSimApi.syncAccountingPersona(projectId);
+            await reloadData();
+            if (res.created) {
+                message.success(`Đã bổ sung vai trò Kế toán Công nợ (#${res.persona.agent_id} ${res.persona.full_name}).`);
+            } else {
+                message.info(`Dự án đã có vai trò Kế toán Công nợ (#${res.persona.agent_id} ${res.persona.full_name}).`);
+            }
+        } catch (err) {
+            message.error(err instanceof Error ? err.message : "Đồng bộ Kế toán Công nợ thất bại");
+        } finally {
+            setSyncingAccounting(false);
+        }
+    };
+
     const filtered = personas.filter((p) => {
         if (groupFilter !== "ALL" && p.group_type !== groupFilter) return false;
         if (!searchText.trim()) return true;
@@ -337,13 +356,14 @@ export default function PersonaMatrixPage() {
         return (
             <div style={{ padding: 48, textAlign: "center" }}>
                 <Spin size="large" />
-                <div style={{ marginTop: 12 }}><Text type="secondary">Đang tải danh sách 21 Persona...</Text></div>
+                <div style={{ marginTop: 12 }}><Text type="secondary">Đang tải danh sách Persona...</Text></div>
             </div>
         );
     }
 
     const bqlCount = personas.filter((p) => p.group_type === "BQL").length;
     const resCount = personas.filter((p) => p.group_type === "RESIDENT").length;
+    const hasAccountantPersona = personas.some((p) => p.role_code === "BQL_ACCOUNTANT");
 
     return (
         <div style={{ padding: "16px", maxWidth: 1380, margin: "0 auto" }}>
@@ -379,6 +399,26 @@ export default function PersonaMatrixPage() {
                     message="Nguyên tắc bảo mật mật khẩu & Phân quyền"
                     description="Mật khẩu QLTN của từng nhân sự BQL được mã hóa bằng Fernet AES trước khi lưu SQLite và luôn hiển thị dạng ẩn (••••••). Cư dân Chủ hộ mặc định bị khóa quyền phần mềm BQL ở cả Prompt lẫn tầng Tool ACL."
                 />
+
+                {!hasAccountantPersona && (
+                    <Alert
+                        type="warning"
+                        showIcon
+                        message="Chưa có vai trò Kế toán Công nợ & Phí dịch vụ (BQL_ACCOUNTANT)"
+                        description="Dự án khu đô thị nên có nhân sự Kế toán Công nợ để kiểm thử hóa đơn phí quản lý, thanh toán & đối soát sổ quỹ (vẫn bảo toàn an toàn không bấm khóa sổ/xóa chứng từ)."
+                        action={
+                            <Button
+                                type="primary"
+                                size="small"
+                                icon={<PlusOutlined />}
+                                loading={syncingAccounting}
+                                onClick={() => void handleSyncAccountingPersona()}
+                            >
+                                Bổ sung Kế toán Công nợ (BQL_ACCOUNTANT)
+                            </Button>
+                        }
+                    />
+                )}
 
                 <Card size="small">
                     <Row gutter={[12, 12]} align="middle" justify="space-between" style={{ marginBottom: 12 }}>

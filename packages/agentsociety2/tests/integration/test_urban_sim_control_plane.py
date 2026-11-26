@@ -233,8 +233,8 @@ def test_l1_tc_01_seed_ssrf_atlas_and_map_upload(tmp_path: Path, monkeypatch):
             proj = items[0]
             pid = proj["id"]
             assert proj["slug"] == "mulberrylane"
-            assert proj["stats"]["total_personas"] == 21
-            assert proj["stats"]["bql_count"] == 11
+            assert proj["stats"]["total_personas"] == 22
+            assert proj["stats"]["bql_count"] == 12
             assert proj["stats"]["resident_count"] == 10
             assert proj["stats"]["zones_count"] == 9
 
@@ -1935,9 +1935,10 @@ def test_eval_04_prepost_quiz_compiler_and_parser_safety(tmp_path: Path):
     ans_b = _parse_question_answer(q_item, '{"reason": "biết rồi", "answer": "Chọn OPT_B"}')
     assert ans_b.parse_success is True and ans_b.parsed_value == "OPT_B"
 
-    # Compiler emits 3 steps + separate competency_quiz_key.json
+    # Compiler emits 3 steps + separate competency_quiz_key.json when only prepost quiz enabled
     init_urban_sim_db(tmp_path)
     proj = ensure_mulberrylane_seed(tmp_path)
+    proj.enable_sociological_debrief = False
     proj.enable_competency_prepost_quiz = True
     proj.pilot_mode = True
     with Session(get_engine(tmp_path)) as sess:
@@ -1966,12 +1967,36 @@ def test_eval_04_prepost_quiz_compiler_and_parser_safety(tmp_path: Path):
     assert (run_dir / "init" / "competency_quiz_key.json").is_file()
     assert _count_expected_top_level_steps(run_dir) == 3
 
-    # Lifecycle execution_phase check
+    # Lifecycle execution_phase check (3-step legacy Quiz)
     assert derive_execution_phase(run_dir, "RUNNING", 0, 8) == "PRE_QUIZ"
     (run_dir / "SOCIETY_STEP.json").write_text(json.dumps({"completed_step_count": 2}), encoding="utf-8")
     assert derive_execution_phase(run_dir, "RUNNING", 8, 8) == "POST_QUIZ"
     (run_dir / "SOCIETY_STEP.json").write_text(json.dumps({"completed_step_count": 3}), encoding="utf-8")
     assert derive_execution_phase(run_dir, "RUNNING", 8, 8) == "DONE"
+
+    # When both debrief + prepost quiz enabled -> 4 steps: pre, run, debrief, post
+    proj.enable_sociological_debrief = True
+    run_dir_4 = tmp_path / "run_debrief_and_quiz_compile"
+    bundle_4 = compile_run_from_db(
+        project=proj,
+        personas=personas,
+        atlas=atlas,
+        zones=[],
+        run_dir=run_dir_4,
+        workspace_root=tmp_path,
+    )
+    steps_4 = yaml.safe_load(bundle_4.steps_path.read_text(encoding="utf-8"))["steps"]
+    assert [s.get("questionnaire_id") or s["type"] for s in steps_4] == [
+        "bql_competency_pre",
+        "run",
+        "bql_sociological_debrief",
+        "bql_competency_post",
+    ]
+    assert derive_execution_phase(run_dir_4, "RUNNING", 0, 8) == "PRE_QUIZ"
+    (run_dir_4 / "SOCIETY_STEP.json").write_text(json.dumps({"completed_step_count": 2}), encoding="utf-8")
+    assert derive_execution_phase(run_dir_4, "RUNNING", 8, 8) == "POST_DEBRIEF"
+    (run_dir_4 / "SOCIETY_STEP.json").write_text(json.dumps({"completed_step_count": 3}), encoding="utf-8")
+    assert derive_execution_phase(run_dir_4, "RUNNING", 8, 8) == "POST_QUIZ"
 
 
 def test_eval_05_ai_audit_security_ssrf_and_pii_redaction(tmp_path: Path, monkeypatch):
@@ -3146,6 +3171,425 @@ def test_rubric_default_endpoint_and_roundtrip(tmp_path: Path, monkeypatch):
         )
         assert reset_res.status_code == 200
         assert (reset_res.json()["project"]["competency_rubric_json"] or "") == ""
+
+
+def test_soc_01_debrief_default_compile_and_lifecycle(tmp_path: Path):
+    """TC-SOC-01: Default project enables Sociological Debrief (2 steps: run + bql_sociological_debrief) -> POST_DEBRIEF."""
+    import yaml
+    from agentsociety2.backend.services.urban_sim.lifecycle import (
+        _count_expected_top_level_steps,
+        derive_execution_phase,
+    )
+
+    init_urban_sim_db(tmp_path)
+    proj = ensure_mulberrylane_seed(tmp_path)
+    assert proj.enable_sociological_debrief is True
+    assert proj.enable_competency_prepost_quiz is False
+
+    with Session(get_engine(tmp_path)) as sess:
+        personas = list(sess.exec(select(UrbanSimPersona).where(UrbanSimPersona.project_id == proj.id)).all())
+        atlas = sess.get(UrbanSimAtlasConfig, proj.id)
+        run_dir = tmp_path / "run_default_debrief"
+        bundle = compile_run_from_db(
+            project=proj,
+            personas=personas,
+            atlas=atlas,
+            zones=[],
+            run_dir=run_dir,
+            workspace_root=tmp_path,
+        )
+
+    steps = yaml.safe_load(bundle.steps_path.read_text(encoding="utf-8"))["steps"]
+    assert len(steps) == 2
+    assert steps[0]["type"] == "run"
+    assert steps[1]["type"] == "questionnaire"
+    assert steps[1]["questionnaire_id"] == "bql_sociological_debrief"
+    assert steps[1]["allow_env_tools"] is False
+    assert steps[1]["retry_on_parse_error"] is True
+    assert _count_expected_top_level_steps(run_dir) == 2
+
+    assert derive_execution_phase(run_dir, "RUNNING", 2, 8) == "SIMULATING"
+    (run_dir / "SOCIETY_STEP.json").write_text(json.dumps({"completed_step_count": 1}), encoding="utf-8")
+    assert derive_execution_phase(run_dir, "RUNNING", 8, 8) == "POST_DEBRIEF"
+    (run_dir / "SOCIETY_STEP.json").write_text(json.dumps({"completed_step_count": 2}), encoding="utf-8")
+    assert derive_execution_phase(run_dir, "RUNNING", 8, 8) == "DONE"
+
+    # Explicit disable returns single-step run
+    proj.enable_sociological_debrief = False
+    with Session(get_engine(tmp_path)) as sess:
+        personas = list(sess.exec(select(UrbanSimPersona).where(UrbanSimPersona.project_id == proj.id)).all())
+        atlas = sess.get(UrbanSimAtlasConfig, proj.id)
+        run_dir_off = tmp_path / "run_debrief_off"
+        bundle_off = compile_run_from_db(
+            project=proj,
+            personas=personas,
+            atlas=atlas,
+            zones=[],
+            run_dir=run_dir_off,
+            workspace_root=tmp_path,
+        )
+    steps_off = yaml.safe_load(bundle_off.steps_path.read_text(encoding="utf-8"))["steps"]
+    assert [s["type"] for s in steps_off] == ["run"]
+
+
+def test_soc_02_allow_env_tools_false_and_json_retry(tmp_path: Path):
+    """TC-SOC-02: allow_env_tools=False blocks ask_env & env:* scripts, legacy agent signature works, JSON retries 1x."""
+    from agentsociety2.agent.base.tool_schema import react_tool_schemas
+    from agentsociety2.agent.person import PersonAgent
+    from agentsociety2.society.questionnaire import QuestionItem, Questionnaire, QuestionnaireRunner
+
+    schemas_default = react_tool_schemas(allow_env_tools=True)
+    schemas_locked = react_tool_schemas(allow_env_tools=False)
+    assert any(s["function"]["name"] == "ask_env" for s in schemas_default)
+    assert not any(s["function"]["name"] == "ask_env" for s in schemas_locked)
+    assert any(s["function"]["name"] == "execute_skill_script" for s in schemas_locked)
+
+    ws99 = tmp_path / "ws_99"
+    PersonAgent.create(ws99, {"id": 99, "name": "Tester"}, {})
+
+    class _DummyLLM:
+        model_name = "mock-gpt"
+
+    proxy99 = SimpleNamespace(
+        env=None,
+        llm=SimpleNamespace(coder=_DummyLLM(), default=_DummyLLM(), embedding=None),
+        trace=None,
+        replay=None,
+        run_dir=tmp_path,
+    )
+
+    async def _exercise_tool_lock():
+        agent = await PersonAgent.from_workspace(ws99, proxy99)
+        res_ask = await agent.dispatch_react_tool(
+            "ask_env", {"instruction": "open browser"}, allow_env_tools=False
+        )
+        res_script_colon = await agent.dispatch_react_tool(
+            "execute_skill_script", {"script": "env:browser_click"}, allow_env_tools=False
+        )
+        res_script_slash = await agent.dispatch_react_tool(
+            "execute_skill_script", {"script": "env/portal.py"}, allow_env_tools=False
+        )
+        return res_ask, res_script_colon, res_script_slash
+
+    r1, r2, r3 = asyncio.run(_exercise_tool_lock())
+    for res in (r1, r2, r3):
+        assert res.ok is False or "ALLOW_ENV_TOOLS_FALSE" in str(res.observation).upper() or "allow_env_tools" in str(res.observation)
+
+    # Legacy subclass without allow_env_tools param + retry_on_parse_error=True for JSON
+    class _LegacyAgent:
+        def __init__(self, responses):
+            self.id = 1
+            self.name = "Legacy Tester"
+            self._responses = list(responses)
+            self.calls = 0
+
+        async def ask(self, message: str, readonly: bool = True, t: datetime | None = None) -> str:
+            idx = min(self.calls, len(self._responses) - 1)
+            self.calls += 1
+            return self._responses[idx]
+
+    q = Questionnaire(
+        questionnaire_id="test_debrief",
+        questions=[
+            QuestionItem(
+                id="debrief_json",
+                prompt="Trả về JSON",
+                response_type="json",
+            )
+        ],
+        allow_env_tools=False,
+        retry_on_parse_error=True,
+    )
+    runner = QuestionnaireRunner()
+    # 1st attempt: invalid JSON -> 2nd valid dict -> succeeds!
+    legacy_ok = _LegacyAgent(["not-json-at-all", json.dumps({"umux_capabilities": 6, "umux_ease": 6})])
+    resp_ok = asyncio.run(
+        runner.run(q, [legacy_ok], t=datetime(2026, 6, 15, 11, 0, tzinfo=timezone.utc), step_count=1)
+    )
+    assert legacy_ok.calls == 2
+    assert resp_ok.responses[0].answers[0].parse_success is True
+    assert resp_ok.responses[0].answers[0].parsed_value["umux_capabilities"] == 6
+
+    # test 2: 1st JSON scalar "42" (not dict/list) -> fails schema check & triggers retry -> 2nd valid dict succeeds
+    legacy_scalar = _LegacyAgent(["42", json.dumps({"seq_ease": 5})])
+    resp_scalar = asyncio.run(
+        runner.run(q, [legacy_scalar], t=datetime(2026, 6, 15, 11, 0, tzinfo=timezone.utc), step_count=1)
+    )
+    assert legacy_scalar.calls == 2
+    assert resp_scalar.responses[0].answers[0].parse_success is True
+    assert resp_scalar.responses[0].answers[0].parsed_value["seq_ease"] == 5
+
+
+def test_soc_03_sociological_metrics_triangulation_bias_and_kane(tmp_path: Path):
+    """TC-SOC-03: UMUX-Lite (Lah 2020), Workload ((x-1)/6)*100, CSKH_ALL_FAILED vs NO_CSKH_ASK, PII redact, CIT grounding, Bias Warning, Kane."""
+    from agentsociety2.backend.services.urban_sim.competency import evaluate_run_competency
+
+    init_urban_sim_db(tmp_path)
+    run_dir = tmp_path / "run_soc_eval"
+    art = run_dir / "artifacts"
+    (art / "agent_1").mkdir(parents=True, exist_ok=True)
+    (art / "agent_2").mkdir(parents=True, exist_ok=True)
+    (art / "agent_3").mkdir(parents=True, exist_ok=True)
+    init_dir = run_dir / "init"
+    init_dir.mkdir(parents=True, exist_ok=True)
+
+    init_cfg = {
+        "agents": [
+            {"agent_id": 1, "kwargs": {"profile": {"name": "Giám đốc Test", "group_type": "BQL", "role_code": "BQL_DIRECTOR", "role_title": "Giám đốc Dự án", "software_access_enabled": True}}},
+            {"agent_id": 2, "kwargs": {"profile": {"name": "Kỹ thuật Test", "group_type": "BQL", "role_code": "ENG_STAFF", "role_title": "Nhân viên Kỹ thuật", "software_access_enabled": True}}},
+            {"agent_id": 3, "kwargs": {"profile": {"name": "An ninh Test", "group_type": "BQL", "role_code": "SEC_STAFF", "role_title": "Nhân viên Bảo vệ", "software_access_enabled": True}}},
+        ]
+    }
+    (init_dir / "init_config.json").write_text(json.dumps(init_cfg, ensure_ascii=False), encoding="utf-8")
+
+    # Structured urban_events.jsonl for Behavioral Triangulation
+    # Agent 1: login ok, opened /ext/incidents ok, atlas asked & ok (VALID) -> CIT /ext/incidents matches seq 11!
+    # Agent 2: login ok, clicked fail, atlas asked 2x all failed (CSKH_ALL_FAILED), yet CIT claims unreachable /unknown/nowhere-route -> UNGROUNDED if failed event isn't token/route matched? Note failed ev matches unless ok=True, wait: _ground_cit_incident marks ANY failed WEB/ATLAS event as fallback anchor (`elif not bool(ev.get("ok", True)): matched = True`)! So Agent 3 (no failed events, no matching URL/token) -> UNGROUNDED_SELF_REPORT!
+    (run_dir / "urban_events.jsonl").write_text(
+        "\n".join([
+            json.dumps({"seq": 10, "agent_id": 1, "stream": "WEB", "action": "login_portal", "ok": True, "summary": "Đăng nhập cổng QLTN", "details": {"url": "https://portal/home", "screenshot_path": "artifacts/agent_1/s1.png"}}),
+            json.dumps({"seq": 11, "agent_id": 1, "stream": "WEB", "action": "navigate", "ok": True, "summary": "Mở danh sách phản ánh cư dân", "details": {"url": "https://portal/ext/incidents", "screenshot_path": "artifacts/agent_1/s2.png"}}),
+            json.dumps({"seq": 12, "agent_id": 1, "stream": "ATLAS", "action": "ask_support", "ok": True, "summary": "Hỏi quy trình /ext/incidents", "details": {"question": "Quy trình /ext/incidents"}}),
+            json.dumps({"seq": 13, "agent_id": 1, "stream": "COMM", "action": "manage_incident", "ok": True, "summary": "Xử lý phản ánh"}),
+            json.dumps({"seq": 20, "agent_id": 2, "stream": "WEB", "action": "login_portal", "ok": True, "summary": "Đăng nhập QLTN", "details": {"url": "https://portal/home"}}),
+            json.dumps({"seq": 21, "agent_id": 2, "stream": "WEB", "action": "click", "ok": False, "summary": "Lỗi nút trên /ext/internal-tasks", "details": {"url": "https://portal/ext/internal-tasks"}}),
+            json.dumps({"seq": 22, "agent_id": 2, "stream": "ATLAS", "action": "ask_support", "ok": False, "summary": "Lỗi kết nối CSKH lần 1", "details": {"question": "Mở phiếu lỗi"}}),
+            json.dumps({"seq": 23, "agent_id": 2, "stream": "ATLAS", "action": "ask_support", "ok": False, "summary": "Lỗi kết nối CSKH lần 2", "details": {"question": "Mở phiếu lần 2"}}),
+            json.dumps({"seq": 30, "agent_id": 3, "stream": "WEB", "action": "login_portal", "ok": True, "summary": "Đăng nhập QLTN", "details": {"url": "https://portal/home"}}),
+        ]),
+        encoding="utf-8",
+    )
+
+    debrief_payload = {
+        "questionnaire_id": "bql_sociological_debrief",
+        "responses": [
+            {
+                "agent_id": 1,
+                "answers": [
+                    {
+                        "question_id": "q_debrief_metrics",
+                        "parse_success": True,
+                        "parsed_value": {
+                            "umux_capabilities": 7,
+                            "umux_ease": 5,
+                            "seq_ease": 6,
+                            "workload_effort": 5,
+                            "workload_frustration": 3,
+                            "cskh_accuracy": 6,
+                            "cskh_helpfulness": 6,
+                        },
+                    },
+                    {
+                        "question_id": "q_debrief_incidents",
+                        "parse_success": True,
+                        "parsed_value": {
+                            "incidents": [
+                                {
+                                    "context_task": "Kiểm tra danh sách phản ánh cư dân",
+                                    "screen_or_url": "/ext/incidents",
+                                    "what_happened": "Cư dân SĐT 0912345678 phản ánh chậm hiển thị",
+                                    "cskh_outcome": "HELPFUL",
+                                    "root_cause_category": "SOFTWARE_UX_BUG",
+                                    "severity": "MAJOR",
+                                    "suggestion": "Tối ưu phân trang /ext/incidents",
+                                }
+                            ]
+                        },
+                    },
+                    {
+                        "question_id": "q_debrief_reflection",
+                        "parse_success": True,
+                        "parsed_value": "Dễ theo dõi phản ánh.",
+                    },
+                ],
+            },
+            {
+                "agent_id": 2,
+                "answers": [
+                    {
+                        "question_id": "q_debrief_metrics",
+                        "parse_success": True,
+                        "parsed_value": {
+                            "umux_capabilities": 7,
+                            "umux_ease": 7,
+                            "seq_ease": 7,
+                            "workload_effort": 2,
+                            "workload_frustration": 1,
+                            "cskh_accuracy": 7,
+                            "cskh_helpfulness": 7,
+                        },
+                    },
+                    {
+                        "question_id": "q_debrief_incidents",
+                        "parse_success": True,
+                        "parsed_value": {"incidents": []},
+                    },
+                    {
+                        "question_id": "q_debrief_reflection",
+                        "parse_success": True,
+                        "parsed_value": "Mọi thứ hoàn hảo!",
+                    },
+                ],
+            },
+            {
+                "agent_id": 3,
+                "answers": [
+                    {
+                        "question_id": "q_debrief_metrics",
+                        "parse_success": True,
+                        "parsed_value": {
+                            "umux_capabilities": 5,
+                            "umux_ease": 5,
+                            "seq_ease": 5,
+                            "workload_effort": 4,
+                            "workload_frustration": 2,
+                            "cskh_accuracy": 6,
+                            "cskh_helpfulness": 6,
+                        },
+                    },
+                    {
+                        "question_id": "q_debrief_incidents",
+                        "parse_success": True,
+                        "parsed_value": {
+                            "incidents": [
+                                {
+                                    "context_task": "Tìm báo cáo thuế năm 2099",
+                                    "screen_or_url": "/unknown/nowhere-route",
+                                    "what_happened": "Không tìm thấy menu giả định",
+                                    "cskh_outcome": "NOT_ASKED",
+                                    "root_cause_category": "KNOWLEDGE_GAP",
+                                    "severity": "MINOR",
+                                    "suggestion": "Bổ sung tài liệu",
+                                }
+                            ]
+                        },
+                    },
+                    {
+                        "question_id": "q_debrief_reflection",
+                        "parse_success": True,
+                        "parsed_value": "Chưa hỏi CSKH lần nào.",
+                    },
+                ],
+            },
+        ],
+    }
+    (art / "questionnaire_step_2.json").write_text(
+        json.dumps(debrief_payload, ensure_ascii=False), encoding="utf-8"
+    )
+
+    report = evaluate_run_competency(run_dir=run_dir, bypass_cache=True)
+    soc = report["sociological_debrief"]
+    assert soc["available"] is True
+    assert soc["status"] == "COMPLETE"
+    assert soc["respondents_n"] == 3
+    assert soc["cskh_valid_n"] == 1
+    assert soc["cskh_all_failed_n"] == 1
+
+    ag1 = next(a for a in report["agents"] if a["agent_id"] == 1)
+    ag2 = next(a for a in report["agents"] if a["agent_id"] == 2)
+    ag3 = next(a for a in report["agents"] if a["agent_id"] == 3)
+
+    assert ag1["debrief"]["umux_lite_score"] == 83.3
+    assert ag1["debrief"]["workload_effort_100"] == 66.7
+    assert ag1["debrief"]["workload_frustration_100"] == 33.3
+    assert ag1["debrief"]["workload_subset_100"] == 50.0
+    assert ag1["debrief"]["cskh_status"] == "OK"
+    assert ag1["debrief"]["incidents"][0]["grounding_status"] == "VERIFIED_BY_LOG"
+    assert "0912345678" not in ag1["debrief"]["incidents"][0]["what_happened"]
+
+    assert ag2["debrief"]["cskh_status"] == "CSKH_ALL_FAILED"
+    assert "ACQUIESCENCE_BIAS_WARNING" in ag2["debrief"]["bias_flags"]
+    # Non-compensatory Kane gate: Agent 2 never reached ENG_STAFF target -> stays M1 even with UMUX=100
+    assert ag2["miller_level"] in ("M0", "M1")
+
+    assert ag3["debrief"]["cskh_status"] == "NO_CSKH_ASK"
+    assert ag3["debrief"]["incidents"][0]["grounding_status"] == "UNGROUNDED_SELF_REPORT"
+    assert soc["cskh_quality_mean"] == 6.0
+
+
+def test_soc_04_accounting_role_and_sync_endpoint(tmp_path: Path, monkeypatch):
+    """TC-SOC-04: MulberryLane has #22 BQL_ACCOUNTANT; sync-accounting-persona is idempotent & safe when #22 taken."""
+    from agentsociety2.backend.services.urban_sim.competency import DEFAULT_MULBERRYLANE_RUBRIC
+
+    assert "BQL_ACCOUNTANT" in DEFAULT_MULBERRYLANE_RUBRIC.roles
+
+    monkeypatch.setenv("WORKSPACE_PATH", str(tmp_path))
+    headers = _client_headers(monkeypatch)
+    with TestClient(app, base_url="http://127.0.0.1:8001") as client:
+        # 1. MulberryLane already seeded with #22 BQL_ACCOUNTANT -> idempotent created=False
+        projs = client.get("/api/v1/urban-sim/projects", headers=headers).json()["items"]
+        ml_id = projs[0]["id"]
+        ml_personas = client.get(f"/api/v1/urban-sim/projects/{ml_id}/personas", headers=headers).json()["items"]
+        acc = next((p for p in ml_personas if p["role_code"] == "BQL_ACCOUNTANT"), None)
+        assert acc is not None and acc["agent_id"] == 22 and acc["is_pilot_member"] is True
+
+        sync_ml = client.post(f"/api/v1/urban-sim/projects/{ml_id}/sync-accounting-persona", headers=headers)
+        assert sync_ml.status_code == 200 and sync_ml.json()["created"] is False
+
+        # 2. Custom project where agent_id=22 is already occupied -> allocates next max+1 (=23) cleanly
+        c_res = client.post(
+            "/api/v1/urban-sim/projects",
+            json={
+                "slug": "test-occ-22",
+                "name": "Occupied 22 Test",
+                "default_portal_url": "https://portal.example.com",
+                "seed_mulberrylane_template": False,
+            },
+            headers=headers,
+        )
+        assert c_res.status_code == 200
+        cpid = c_res.json()["project"]["id"]
+        p_occ = client.post(
+            f"/api/v1/urban-sim/projects/{cpid}/personas",
+            json={
+                "agent_id": 22,
+                "full_name": "Cư dân Đang Giữ #22",
+                "role_code": "RESIDENT",
+                "role_title": "Cư dân",
+                "department": "Cư dân",
+                "group_type": "RESIDENT",
+                "software_access_enabled": False,
+                "home_zone": "LOBBY_MAIN",
+            },
+            headers=headers,
+        )
+        assert p_occ.status_code == 200
+
+        sync_new = client.post(f"/api/v1/urban-sim/projects/{cpid}/sync-accounting-persona", headers=headers)
+        assert sync_new.status_code == 200
+        assert sync_new.json()["created"] is True
+        assert sync_new.json()["persona"]["agent_id"] == 23
+        assert sync_new.json()["persona"]["role_code"] == "BQL_ACCOUNTANT"
+
+        sync_again = client.post(f"/api/v1/urban-sim/projects/{cpid}/sync-accounting-persona", headers=headers)
+        assert sync_again.status_code == 200
+        assert sync_again.json()["created"] is False
+
+
+def test_soc_05_scenario_brief_and_zone_details_caps(tmp_path: Path, monkeypatch):
+    """TC-SOC-05: /scenario-brief-template works & observe_urban_inbox injects bounded scenario_brief + zone_details."""
+    monkeypatch.setenv("WORKSPACE_PATH", str(tmp_path))
+    headers = _client_headers(monkeypatch)
+    with TestClient(app, base_url="http://127.0.0.1:8001") as client:
+        tpl_res = client.get("/api/v1/urban-sim/scenario-brief-template", headers=headers)
+        assert tpl_res.status_code == 200
+        assert len(tpl_res.json()["template"]) > 100
+
+    env = UrbanCommAndIncidentEnv(
+        scenario_brief="Thực trạng tồn đọng công nợ & PCCC. " + ("X" * 4500),
+        zones=[
+            {"zone_key": "LOBBY_MAIN", "name": "Sảnh chính", "description": "Mô tả khu vực sảnh " + ("Z" * 400)},
+            {"zone_key": "BASEMENT_B1B2", "name": "Hầm B1-B2", "description": "Mô tả hầm " + ("Y" * 350)},
+        ],
+    )
+    obs = asyncio.run(env.observe_urban_inbox(agent_id=1))
+    bctx = obs["building_context"]
+    assert 100 < len(bctx["scenario_brief"]) <= 4000
+    assert isinstance(bctx["current_zone_detail"], dict)
+    assert len(bctx["current_zone_detail"].get("description", "")) <= 240
+    assert "zone_details" in obs and len(obs["zone_details"]) == 2
+    assert all(len(z.get("description", "")) <= 240 for z in obs["zone_details"])
+
 
 
 

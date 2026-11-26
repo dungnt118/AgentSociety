@@ -140,6 +140,14 @@ class QuestionnaireStep(BaseModel):
         None,
         description="目标 Agent ID 列表；为空时发给全部 Agent",
     )
+    allow_env_tools: bool = Field(
+        True,
+        description="是否允许答卷过程中调用环境交互工具（ask_env / env:*）。",
+    )
+    retry_on_parse_error: bool = Field(
+        False,
+        description="JSON/choice 解析失败时是否自动重试一次纠错。",
+    )
     questions: list[QuestionItem] = Field(..., min_length=1, description="题目列表")
 
 

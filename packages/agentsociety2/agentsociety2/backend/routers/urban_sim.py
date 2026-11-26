@@ -50,7 +50,9 @@ from agentsociety2.backend.services.urban_sim.lifecycle import (
     derive_execution_phase,
 )
 from agentsociety2.backend.services.urban_sim.seed_mulberrylane import (
+    ACCOUNTING_PERSONA_TEMPLATE,
     MULBERRYLANE_PERSONAS,
+    MULBERRYLANE_SCENARIO_BRIEF,
     MULBERRYLANE_ZONES,
     ensure_mulberrylane_seed,
 )
@@ -258,6 +260,7 @@ def _serialize_project_summary(
         "zone_map_image_rel": project.zone_map_image_rel,
         "has_zone_map_image": bool(project.zone_map_image_rel),
         "llm_config_id": project.llm_config_id,
+        "enable_sociological_debrief": bool(getattr(project, "enable_sociological_debrief", True)),
         "enable_competency_prepost_quiz": bool(getattr(project, "enable_competency_prepost_quiz", False)),
         "competency_rubric_json": getattr(project, "competency_rubric_json", None),
         "stats": {
@@ -300,6 +303,7 @@ class ProjectCreateRequest(BaseModel):
     max_cost_usd_per_run: float = Field(5.0, gt=0.0, le=500.0)
     pilot_mode: bool = True
     llm_config_id: str | None = None
+    enable_sociological_debrief: bool = True
     enable_competency_prepost_quiz: bool = False
     competency_rubric_json: str | None = None
     seed_mulberrylane_template: bool = True
@@ -317,6 +321,7 @@ class ProjectUpdateRequest(BaseModel):
     max_cost_usd_per_run: float | None = Field(None, gt=0.0, le=500.0)
     pilot_mode: bool | None = None
     llm_config_id: str | None = None
+    enable_sociological_debrief: bool | None = None
     enable_competency_prepost_quiz: bool | None = None
     competency_rubric_json: str | None = None
 
@@ -451,6 +456,7 @@ async def create_project(payload: ProjectCreateRequest):
             max_cost_usd_per_run=payload.max_cost_usd_per_run,
             pilot_mode=payload.pilot_mode,
             llm_config_id=payload.llm_config_id,
+            enable_sociological_debrief=bool(payload.enable_sociological_debrief),
             enable_competency_prepost_quiz=bool(payload.enable_competency_prepost_quiz),
             competency_rubric_json=clean_rubric,
         )
@@ -539,6 +545,8 @@ async def update_project(project_id: str, payload: ProjectUpdateRequest):
             proj.pilot_mode = payload.pilot_mode
         if "llm_config_id" in payload.model_fields_set:
             proj.llm_config_id = (payload.llm_config_id or "").strip() or None
+        if payload.enable_sociological_debrief is not None:
+            proj.enable_sociological_debrief = bool(payload.enable_sociological_debrief)
         if payload.enable_competency_prepost_quiz is not None:
             proj.enable_competency_prepost_quiz = bool(payload.enable_competency_prepost_quiz)
         if "competency_rubric_json" in payload.model_fields_set:
@@ -728,6 +736,70 @@ async def create_persona(project_id: str, payload: PersonaCreateRequest):
         session.commit()
         session.refresh(persona)
         return {"success": True, "persona": _serialize_persona(persona)}
+
+
+@router.get("/scenario-brief-template")
+async def get_scenario_brief_template():
+    """Trả về mẫu Thực trạng Khu đô thị chi tiết làm gợi ý nạp trực tiếp vào bối cảnh mô phỏng."""
+    return {
+        "success": True,
+        "template": MULBERRYLANE_SCENARIO_BRIEF,
+    }
+
+
+@router.post("/projects/{project_id}/sync-accounting-persona")
+async def sync_accounting_persona(project_id: str):
+    """Bổ sung an toàn nhân sự Kế toán Công nợ (BQL_ACCOUNTANT) mà không ghi đè persona hiện hữu."""
+    ws = _ws_root()
+    init_urban_sim_db(ws)
+    engine = get_engine(ws)
+    with Session(engine) as session:
+        proj = _require_project(session, project_id)
+        existing = session.exec(
+            select(UrbanSimPersona).where(UrbanSimPersona.project_id == project_id)
+        ).all()
+        already = next(
+            (p for p in existing if (p.role_code or "").strip().upper() == "BQL_ACCOUNTANT"),
+            None,
+        )
+        if already is not None:
+            return {
+                "success": True,
+                "created": False,
+                "persona": _serialize_persona(already),
+            }
+
+        used_ids = {int(r.agent_id) for r in existing}
+        preferred_id = int(ACCOUNTING_PERSONA_TEMPLATE["agent_id"])
+        target_id = preferred_id if preferred_id not in used_ids else (max(used_ids, default=21) + 1)
+
+        tpl = ACCOUNTING_PERSONA_TEMPLATE
+        persona = UrbanSimPersona(
+            project_id=project_id,
+            agent_id=target_id,
+            full_name=str(tpl["full_name"]),
+            role_code=str(tpl["role_code"]),
+            role_title=str(tpl["role_title"]),
+            department=str(tpl["department"]),
+            group_type=str(tpl["group_type"]),
+            software_access_enabled=bool(tpl["software_access_enabled"]),
+            is_pilot_member=bool(tpl["is_pilot_member"]),
+            is_active=True,
+            home_zone=str(tpl["home_zone"]),
+            domain_knowledge_prompt=str(tpl["domain_knowledge_prompt"]),
+            initial_tasks_json=json.dumps(tpl["initial_tasks"], ensure_ascii=False),
+            portal_url=proj.default_portal_url,
+            login_username=None,
+            login_password_enc=None,
+        )
+        session.add(persona)
+        session.commit()
+        session.refresh(persona)
+        return {
+            "success": True,
+            "created": True,
+            "persona": _serialize_persona(persona),
+        }
 
 
 @router.patch("/projects/{project_id}/personas/{persona_id}")

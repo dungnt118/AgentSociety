@@ -747,6 +747,10 @@ class AgentBase(ABC):
         :returns: 元组 ``(ctx, answer)`` 。
         """
         assert self._env is not None, "Environment is not initialized"
+        if getattr(self, "_disallow_env_tools_active", False):
+            raise RuntimeError(
+                "Environment tools (ask_env) are disabled in this readonly/questionnaire context"
+            )
         # Framework-provided identity keys, independent of any skill.
         i = self.id
         merged_ctx = {**ctx, "id": i, "agent_id": i, "person_id": i}
@@ -1701,6 +1705,7 @@ The constructor ``__init__`` is arg-less.
         args: dict[str, Any],
         *,
         readonly: bool = False,
+        allow_env_tools: bool = True,
     ) -> ReactToolResult:
         """分发一个 ReAct 工具调用。
 
@@ -1926,6 +1931,16 @@ The constructor ``__init__`` is arg-less.
                     [str(item) for item in argv] if isinstance(argv, list) else []
                 )
                 if skill_id.startswith("env:"):
+                    if (not allow_env_tools) or getattr(self, "_disallow_env_tools_active", False):
+                        return ReactToolResult(
+                            False,
+                            "environment skill execution is disabled when allow_env_tools=False",
+                            {
+                                "skill_id": skill_id,
+                                "argv": argv_list,
+                                "allow_env_tools": False,
+                            },
+                        )
                     instruction = self._build_env_skill_instruction(args, argv_list)
                     env_readonly = bool(args.get("readonly", False))
                     if readonly and not env_readonly:
@@ -1979,6 +1994,12 @@ The constructor ``__init__`` is arg-less.
                     },
                 )
             if action == "ask_env":
+                if (not allow_env_tools) or getattr(self, "_disallow_env_tools_active", False):
+                    return ReactToolResult(
+                        False,
+                        "ask_env is disabled when allow_env_tools=False",
+                        {"action": action, "allow_env_tools": False},
+                    )
                 ctx = self._build_env_tool_context(args)
                 instruction = str(args.get("instruction") or "")
                 if not instruction:
@@ -2149,6 +2170,7 @@ The constructor ``__init__`` is arg-less.
         observations: list[dict[str, Any]] | None = None,
         question: str | None = None,
         readonly: bool = False,
+        allow_env_tools: bool = True,
         skill_hooks: list[dict[str, Any]] | None = None,
     ) -> str:
         """运行 ReAct 循环直至 finish 或轮次上限。
@@ -2186,174 +2208,183 @@ The constructor ``__init__`` is arg-less.
                 skill_hooks=skill_hooks,
             )
         )
-        with self.trace_span(
-            "react.loop",
-            attributes={
-                "agent.tick": tick,
-                "operation.type": "react",
-                "react.max_turns": self._max_react_turns,
-                "react.readonly": readonly,
-                "input.message_chars": len(question or ""),
-            },
-        ) as loop_span:
-            for turn in range(1, self._max_react_turns + 1):
-                with self.trace_span(
-                    "react.turn",
-                    attributes={
-                        "agent.tick": tick,
-                        "operation.type": "react",
-                        "react.turn": turn,
-                    },
-                ) as turn_span:
-                    # Clear the per-turn parse error so a stale message from an
-                    # earlier turn never surfaces as corrective feedback if the
-                    # current turn yields empty decisions for a different reason
-                    # (e.g. an empty-content response that carries no error).
-                    self._last_react_error = ""
-                    react_turn = await self._call_react_llm_with_messages(
-                        messages, readonly=readonly
-                    )
-                    decisions = react_turn.decisions
-                    turn_span.attributes.update(
-                        {
-                            "react.action": ", ".join(d.action for d in decisions)
-                            if decisions
-                            else "(none)",
-                            "react.tool_count": len(decisions),
-                            "llm.message_count": len(messages),
-                            # Which encoding served this turn — lets a production
-                            # run be sliced by it, so the append-only change can
-                            # be A/B-ed from logs without a permanent switch.
-                            "react.history_encoding": (
-                                "tool"
-                                if (react_turn.assistant_message or {}).get(
-                                    "tool_calls"
+        prev_disallow_env = getattr(self, "_disallow_env_tools_active", False)
+        self._disallow_env_tools_active = not allow_env_tools
+        try:
+            with self.trace_span(
+                "react.loop",
+                attributes={
+                    "agent.tick": tick,
+                    "operation.type": "react",
+                    "react.max_turns": self._max_react_turns,
+                    "react.readonly": readonly,
+                    "react.allow_env_tools": allow_env_tools,
+                    "input.message_chars": len(question or ""),
+                },
+            ) as loop_span:
+                for turn in range(1, self._max_react_turns + 1):
+                    with self.trace_span(
+                        "react.turn",
+                        attributes={
+                            "agent.tick": tick,
+                            "operation.type": "react",
+                            "react.turn": turn,
+                        },
+                    ) as turn_span:
+                        # Clear the per-turn parse error so a stale message from an
+                        # earlier turn never surfaces as corrective feedback if the
+                        # current turn yields empty decisions for a different reason
+                        # (e.g. an empty-content response that carries no error).
+                        self._last_react_error = ""
+                        react_turn = await self._call_react_llm_with_messages(
+                            messages,
+                            readonly=readonly,
+                            allow_env_tools=allow_env_tools,
+                        )
+                        decisions = react_turn.decisions
+                        turn_span.attributes.update(
+                            {
+                                "react.action": ", ".join(d.action for d in decisions)
+                                if decisions
+                                else "(none)",
+                                "react.tool_count": len(decisions),
+                                "llm.message_count": len(messages),
+                                # Which encoding served this turn — lets a production
+                                # run be sliced by it, so the append-only change can
+                                # be A/B-ed from logs without a permanent switch.
+                                "react.history_encoding": (
+                                    "tool"
+                                    if (react_turn.assistant_message or {}).get(
+                                        "tool_calls"
+                                    )
+                                    else "user"
+                                ),
+                            }
+                        )
+                        thought_text = react_turn.thought or _extract_react_thought(
+                            react_turn.assistant_message,
+                            decisions=decisions,
+                        )
+                        if thought_text:
+                            turn_span.attributes["react.thought"] = thought_text
+
+                        finish_d = next(
+                            (d for d in decisions if d.action == "finish"), None
+                        )
+                        if finish_d is not None:
+                            # Capture memories the model recorded inline in the
+                            # step-mode finish tool, so step() can ingest them
+                            # without a separate extraction pass. Absent in ask mode
+                            # (finish carries only `answer`) — stays None there.
+                            self._last_finish_memories = finish_d.args.get("memories")
+                            # Step-mode finish has no `final` text; derive a brief
+                            # step result from the recorded memories so the trace /
+                            # step summary stays meaningful (ask mode keeps its
+                            # explicit `answer`).
+                            final = (
+                                finish_d.final
+                                or _brief_memories_summary(self._last_finish_memories)
+                                or "done"
+                            )
+                            loop_span.attributes.update(
+                                {
+                                    "react.end_reason": "finish",
+                                    "output.summary": {"final": final},
+                                }
+                            )
+                            return final
+
+                        if not decisions:
+                            # No valid tool call this turn (parse/validation failed
+                            # even after the within-turn retry). Instead of silently
+                            # ending as "done" — which drops the ask answer / step
+                            # memory — record the failure so the model can
+                            # self-correct on a later turn. The corrective feedback
+                            # is already in `messages`; `observations` stays the
+                            # side-channel that react.tool_ok and the end-of-loop
+                            # fallbacks read. The loop is still bounded by
+                            # _max_react_turns; if the model never recovers we
+                            # synthesize a fallback below.
+                            feedback = (
+                                self._last_react_error or "No valid tool call was produced."
+                            )
+                            observations.append(
+                                {
+                                    "turn": turn,
+                                    "action": "(invalid)",
+                                    "ok": False,
+                                    "observation": feedback,
+                                    "data": {"error": feedback},
+                                }
+                            )
+                            continue
+
+                        if react_turn.assistant_message is not None:
+                            messages.append(react_turn.assistant_message)
+                        entries: list[dict[str, Any]] = []
+                        results = await self._execute_react_tools(
+                            decisions,
+                            readonly=readonly,
+                        )
+                        for decision, result in zip(decisions, results):
+                            if not result.ok:
+                                logger.warning(
+                                    "Agent %s: ReAct tool failed: action=%s observation=%s",
+                                    self.id,
+                                    decision.action,
+                                    _short_text(result.observation, limit=300),
                                 )
-                                else "user"
-                            ),
+                            entries.append(
+                                {
+                                    "turn": turn,
+                                    "action": decision.action,
+                                    "ok": result.ok,
+                                    "observation": result.observation,
+                                    "data": result.data,
+                                }
+                            )
+                        observations.extend(entries)
+                        messages.extend(_react_tool_replies(decisions, entries))
+                        self._append_context_refresh(
+                            messages, decisions, entries, tick=tick, t=t
+                        )
+                        turn_span.attributes["react.tool_ok"] = all(
+                            obs["ok"] for obs in observations if obs.get("turn") == turn
+                        )
+
+                # Loop exhausted without a valid finish. Fall back to a rule-based
+                # result so the agent always carries forward *something*: a step
+                # memory synthesized from the turn observations (step mode), or the
+                # last free-text answer the model emitted (ask mode).
+                if readonly:
+                    final = self._synthesize_ask_fallback()
+                    loop_span.attributes.update(
+                        {
+                            "react.end_reason": "ask_fallback",
+                            "output.summary": {"final": final},
                         }
                     )
-                    thought_text = react_turn.thought or _extract_react_thought(
-                        react_turn.assistant_message,
-                        decisions=decisions,
-                    )
-                    if thought_text:
-                        turn_span.attributes["react.thought"] = thought_text
-
-                    finish_d = next(
-                        (d for d in decisions if d.action == "finish"), None
-                    )
-                    if finish_d is not None:
-                        # Capture memories the model recorded inline in the
-                        # step-mode finish tool, so step() can ingest them
-                        # without a separate extraction pass. Absent in ask mode
-                        # (finish carries only `answer`) — stays None there.
-                        self._last_finish_memories = finish_d.args.get("memories")
-                        # Step-mode finish has no `final` text; derive a brief
-                        # step result from the recorded memories so the trace /
-                        # step summary stays meaningful (ask mode keeps its
-                        # explicit `answer`).
-                        final = (
-                            finish_d.final
-                            or _brief_memories_summary(self._last_finish_memories)
-                            or "done"
-                        )
-                        loop_span.attributes.update(
-                            {
-                                "react.end_reason": "finish",
-                                "output.summary": {"final": final},
-                            }
-                        )
-                        return final
-
-                    if not decisions:
-                        # No valid tool call this turn (parse/validation failed
-                        # even after the within-turn retry). Instead of silently
-                        # ending as "done" — which drops the ask answer / step
-                        # memory — record the failure so the model can
-                        # self-correct on a later turn. The corrective feedback
-                        # is already in `messages`; `observations` stays the
-                        # side-channel that react.tool_ok and the end-of-loop
-                        # fallbacks read. The loop is still bounded by
-                        # _max_react_turns; if the model never recovers we
-                        # synthesize a fallback below.
-                        feedback = (
-                            self._last_react_error or "No valid tool call was produced."
-                        )
-                        observations.append(
-                            {
-                                "turn": turn,
-                                "action": "(invalid)",
-                                "ok": False,
-                                "observation": feedback,
-                                "data": {"error": feedback},
-                            }
-                        )
-                        continue
-
-                    if react_turn.assistant_message is not None:
-                        messages.append(react_turn.assistant_message)
-                    entries: list[dict[str, Any]] = []
-                    results = await self._execute_react_tools(
-                        decisions,
-                        readonly=readonly,
-                    )
-                    for decision, result in zip(decisions, results):
-                        if not result.ok:
-                            logger.warning(
-                                "Agent %s: ReAct tool failed: action=%s observation=%s",
-                                self.id,
-                                decision.action,
-                                _short_text(result.observation, limit=300),
-                            )
-                        entries.append(
-                            {
-                                "turn": turn,
-                                "action": decision.action,
-                                "ok": result.ok,
-                                "observation": result.observation,
-                                "data": result.data,
-                            }
-                        )
-                    observations.extend(entries)
-                    messages.extend(_react_tool_replies(decisions, entries))
-                    self._append_context_refresh(
-                        messages, decisions, entries, tick=tick, t=t
-                    )
-                    turn_span.attributes["react.tool_ok"] = all(
-                        obs["ok"] for obs in observations if obs.get("turn") == turn
-                    )
-
-            # Loop exhausted without a valid finish. Fall back to a rule-based
-            # result so the agent always carries forward *something*: a step
-            # memory synthesized from the turn observations (step mode), or the
-            # last free-text answer the model emitted (ask mode).
-            if readonly:
-                final = self._synthesize_ask_fallback()
+                    return final
+                self._last_finish_memories = self._synthesize_step_fallback_memory(
+                    tick=tick, t=t, observations=observations
+                )
+                final = _brief_memories_summary(self._last_finish_memories) or "done"
                 loop_span.attributes.update(
                     {
-                        "react.end_reason": "ask_fallback",
+                        "react.end_reason": "step_memory_fallback",
                         "output.summary": {"final": final},
                     }
                 )
                 return final
-            self._last_finish_memories = self._synthesize_step_fallback_memory(
-                tick=tick, t=t, observations=observations
-            )
-            final = _brief_memories_summary(self._last_finish_memories) or "done"
-            loop_span.attributes.update(
-                {
-                    "react.end_reason": "step_memory_fallback",
-                    "output.summary": {"final": final},
-                }
-            )
-            return final
+        finally:
+            self._disallow_env_tools_active = prev_disallow_env
 
     async def _call_react_llm_with_messages(
         self,
         messages: list[dict[str, Any]],
         *,
         readonly: bool = False,
+        allow_env_tools: bool = True,
     ) -> ReactTurn:
         """调用 LLM,工具参数非法时重试一次。
 
@@ -2372,14 +2403,20 @@ The constructor ``__init__`` is arg-less.
             },
         ) as span:
             turn, appended = await self._append_react_turn(
-                messages, readonly=readonly, span=span
+                messages,
+                readonly=readonly,
+                allow_env_tools=allow_env_tools,
+                span=span,
             )
             if turn.error:
                 self._last_react_error = turn.error
                 span.attributes["llm.retry"] = True
                 span.attributes["input.message_count"] = len(messages)
                 turn, appended = await self._append_react_turn(
-                    messages, readonly=readonly, span=span
+                    messages,
+                    readonly=readonly,
+                    allow_env_tools=allow_env_tools,
+                    span=span,
                 )
             if turn.error:
                 self._last_react_error = turn.error
@@ -2412,6 +2449,7 @@ The constructor ``__init__`` is arg-less.
         messages: list[dict[str, Any]],
         *,
         readonly: bool,
+        allow_env_tools: bool = True,
         span: Any,
     ) -> tuple[ReactTurn, bool]:
         """运行一次补全,必要时追加纠错回复。
@@ -2425,7 +2463,11 @@ The constructor ``__init__`` is arg-less.
         :returns: ``(turn, appended)``——``appended`` 表示 ``messages``
             是否增长。
         """
-        response = await self._complete_react_once(messages, readonly=readonly)
+        response = await self._complete_react_once(
+            messages,
+            readonly=readonly,
+            allow_env_tools=allow_env_tools,
+        )
         self._record_llm_usage(span, response)
         turn = self._parse_react_turn(response, readonly=readonly)
         if not turn.error:
@@ -2492,11 +2534,13 @@ The constructor ``__init__`` is arg-less.
         messages: list[dict[str, str]],
         *,
         readonly: bool = False,
+        allow_env_tools: bool = True,
     ) -> Any:
         """执行一次 ReAct LLM 补全。
 
         :param messages: OpenAI 风格聊天消息。
         :param readonly: 是否阻止变更类工具。
+        :param allow_env_tools: 是否允许暴露 ``ask_env``。
         :returns: 原始 LLM 响应对象。
         """
         assert self._model_name is not None, "LLM is not initialized"
@@ -2510,6 +2554,7 @@ The constructor ``__init__`` is arg-less.
                 enable_memory=self._enable_memory,
                 disable_skills=not enable_skill_tools,
                 readonly=readonly,
+                allow_env_tools=allow_env_tools,
                 overrides=self._react_tool_overrides(readonly=readonly),
             ),
             tool_choice="auto",

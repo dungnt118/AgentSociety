@@ -81,6 +81,7 @@ def _seed_rich_source_workspace(ws: Path) -> dict[str, str]:
                 "num_steps": 12,
                 "tick_seconds": 600,
                 "llm_config_id": llm_id,
+                "enable_sociological_debrief": False,
                 "enable_competency_prepost_quiz": True,
                 "competency_rubric_json": json.dumps({"version": "2.0", "pass_score": 80}),
                 "seed_mulberrylane_template": False,
@@ -324,6 +325,7 @@ def test_full_export_and_cross_env_fernet_reencryption_restore(
         ).first()
         assert proj_row is not None
         assert proj_row.llm_config_id == llm_row.id
+        assert proj_row.enable_sociological_debrief is False
         assert proj_row.enable_competency_prepost_quiz is True
 
         zone_row = session.exec(

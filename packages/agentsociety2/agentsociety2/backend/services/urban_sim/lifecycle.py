@@ -142,61 +142,6 @@ def _read_json_safe(path: Path) -> dict[str, Any]:
         return {}
 
 
-def _count_expected_top_level_steps(run_dir: Path) -> int:
-    """Count top-level steps in ``init/steps.yaml`` (1 for standard RunStep, 3 with Pre/Post Quiz)."""
-    steps_path = run_dir / "init" / "steps.yaml"
-    if not steps_path.is_file():
-        return 1
-    try:
-        import yaml
-
-        parsed = yaml.safe_load(steps_path.read_text(encoding="utf-8"))
-        steps = parsed.get("steps") if isinstance(parsed, dict) else None
-        if isinstance(steps, list) and len(steps) > 0:
-            return len(steps)
-    except Exception:
-        pass
-    return 1
-
-
-def derive_execution_phase(
-    run_dir: Path,
-    run_status: str,
-    step_count: int,
-    total_steps: int,
-) -> str:
-    """Derive current execution phase: PRE_QUIZ | SIMULATING | POST_QUIZ | DONE (FND-EVAL-10)."""
-    st_up = str(run_status or "").upper()
-    if st_up in {"COMPLETED", "COMPLETED_WITH_ERRORS"}:
-        return "DONE"
-    steps_path = run_dir / "init" / "steps.yaml"
-    steps_list: list[dict[str, Any]] = []
-    if steps_path.is_file():
-        try:
-            import yaml
-
-            parsed = yaml.safe_load(steps_path.read_text(encoding="utf-8"))
-            raw = parsed.get("steps") if isinstance(parsed, dict) else None
-            if isinstance(raw, list):
-                steps_list = [s for s in raw if isinstance(s, dict)]
-        except Exception:
-            steps_list = []
-
-    if len(steps_list) <= 1:
-        return "SIMULATING"
-
-    step_meta = _read_json_safe(run_dir / SOCIETY_STEP_JSON)
-    completed_top = int(step_meta.get("completed_step_count") or 0)
-    first_is_quiz = steps_list[0].get("type") == "questionnaire"
-    last_is_quiz = steps_list[-1].get("type") == "questionnaire"
-
-    if first_is_quiz and completed_top == 0 and step_count == 0:
-        return "PRE_QUIZ"
-    if last_is_quiz and total_steps > 0 and step_count >= total_steps and completed_top < len(steps_list):
-        return "POST_QUIZ"
-    return "SIMULATING"
-
-
 class UrbanSimLifecycleManager:
     """Thread/async-safe lifecycle controller for dynamic database simulation runs."""
 
@@ -645,10 +590,10 @@ def _count_expected_top_level_steps(run_dir: Path) -> int:
 def derive_execution_phase(
     run_dir: Path, run_status: str, step_count: int, total_steps: int
 ) -> str:
-    """Suy ra giai đoạn thực thi hiện tại của Run: PRE_QUIZ | SIMULATING | POST_QUIZ | DONE."""
+    """Suy ra giai đoạn thực thi hiện tại của Run: PRE_QUIZ | SIMULATING | POST_DEBRIEF | POST_QUIZ | DONE."""
     import yaml
 
-    if run_status in {"COMPLETED", "COMPLETED_WITH_ERRORS", "FAILED"}:
+    if str(run_status or "").upper() in {"COMPLETED", "COMPLETED_WITH_ERRORS", "FAILED"}:
         return "DONE"
     steps_path = run_dir / "init" / "steps.yaml"
     steps: list[dict[str, Any]] = []
@@ -669,8 +614,10 @@ def derive_execution_phase(
         return "DONE"
     cur = steps[completed]
     if cur.get("type") == "questionnaire":
-        qid = str(cur.get("questionnaire_id") or "")
-        if "post" in qid:
+        qid = str(cur.get("questionnaire_id") or "").strip()
+        if qid == "bql_sociological_debrief":
+            return "POST_DEBRIEF"
+        if qid == "bql_competency_post" or "post" in qid:
             return "POST_QUIZ"
         return "PRE_QUIZ"
     return "SIMULATING"

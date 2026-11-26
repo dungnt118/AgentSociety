@@ -298,6 +298,7 @@ Minimal config example:
         args: dict[str, Any],
         *,
         readonly: bool = False,
+        allow_env_tools: bool = True,
     ) -> ReactToolResult:
         """分发 person 专属前缀,其余动作委托给基类。
 
@@ -323,7 +324,9 @@ Minimal config example:
                 return self.dispatch_todo_tool(action, args)
         except Exception as exc:
             return ReactToolResult(False, str(exc), {"error": str(exc)})
-        return await super().dispatch_react_tool(action, args, readonly=readonly)
+        return await super().dispatch_react_tool(
+            action, args, readonly=readonly, allow_env_tools=allow_env_tools
+        )
 
     def _react_tool_overrides(self, *, readonly: bool) -> dict[str, Any]:
         """按模式替换 ``finish`` 工具,并在开启 opt-in 时为 ``ask_env`` 增加行动前自述意图。
@@ -719,6 +722,7 @@ Minimal config example:
         readonly: bool = True,
         *,
         t: datetime | None = None,
+        allow_env_tools: bool = True,
     ) -> str:
         """通过 ReAct 循环回答外部问题。"""
         if self._env is None:
@@ -747,6 +751,7 @@ Minimal config example:
                     observations=[],
                     question=message,
                     readonly=readonly,
+                    allow_env_tools=allow_env_tools,
                 )
             except Exception as exc:
                 span.attributes["error.message"] = str(exc)[:300]

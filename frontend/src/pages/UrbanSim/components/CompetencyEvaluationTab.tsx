@@ -36,6 +36,7 @@ import {
     AiAuditRootCauseEntry,
     AiAuditStateResponse,
     CompetencyReport,
+    DebriefIncidentItem,
     LlmConfigListItem,
     NullableMetric,
     urbanSimApi,
@@ -444,6 +445,33 @@ export const CompetencyEvaluationTab: React.FC<CompetencyEvaluationTabProps> = (
             ),
         },
         {
+            title: "UMUX / CIT",
+            key: "debrief",
+            width: 145,
+            render: (_, row) => {
+                const d = row.debrief;
+                if (!d) return <Tag>Chưa phỏng vấn</Tag>;
+                if (d.parse_failed) return <Tag color="red">Lỗi parse</Tag>;
+                return (
+                    <Space direction="vertical" size={2}>
+                        <Space size={4} wrap>
+                            <Tag color={d.umux_lite_score !== null && d.umux_lite_score >= 68 ? "green" : "blue"}>
+                                UMUX {d.umux_lite_score !== null ? d.umux_lite_score.toFixed(0) : "N/A"}
+                            </Tag>
+                            <Tag color={d.incidents.length > 0 ? "volcano" : "default"}>
+                                {d.incidents.length} CIT
+                            </Tag>
+                        </Space>
+                        {d.bias_flags.length > 0 && (
+                            <Tooltip title={d.bias_flags.join(", ")}>
+                                <Tag color="gold" style={{ fontSize: 10 }}>Cảnh báo thiên lệch</Tag>
+                            </Tooltip>
+                        )}
+                    </Space>
+                );
+            },
+        },
+        {
             title: "Tham khảo (Kane)",
             key: "diag",
             width: 120,
@@ -501,7 +529,90 @@ export const CompetencyEvaluationTab: React.FC<CompetencyEvaluationTabProps> = (
     }
 
     const cs = report.cohort_summary;
+    const debriefSummary = cs.sociological_debrief || report.sociological_debrief;
     const selectedResult = auditState?.selected_result || null;
+
+    const renderCitBucket = (title: string, color: string, items: DebriefIncidentItem[]) => (
+        <Card
+            size="small"
+            title={
+                <Space>
+                    <Tag color={color}>{items.length}</Tag>
+                    <span>{title}</span>
+                </Space>
+            }
+            style={{ height: "100%" }}
+        >
+            {items.length === 0 ? (
+                <Text type="secondary">Không ghi nhận sự cố thuộc nhóm này.</Text>
+            ) : (
+                <Space direction="vertical" size={8} style={{ width: "100%" }}>
+                    {items.map((item) => (
+                        <div
+                            key={`${item.agent_id}-${item.incident_idx}`}
+                            style={{
+                                padding: 8,
+                                background: "#f8fafc",
+                                borderRadius: 6,
+                                border: "1px solid #e2e8f0",
+                            }}
+                        >
+                            <Space wrap size={4} style={{ marginBottom: 4 }}>
+                                <Text
+                                    strong
+                                    style={{ color: "#1d4ed8", cursor: "pointer" }}
+                                    onClick={() => onInspectAgent(item.agent_id)}
+                                >
+                                    #{item.agent_id} {item.full_name}
+                                </Text>
+                                <Tag color={item.grounding_status === "VERIFIED_BY_LOG" ? "green" : "orange"}>
+                                    {item.grounding_status === "VERIFIED_BY_LOG"
+                                        ? "VERIFIED_BY_LOG"
+                                        : "UNGROUNDED_SELF_REPORT"}
+                                </Tag>
+                                <Tag
+                                    color={
+                                        item.severity === "CRITICAL" || item.severity === "S1_CRITICAL"
+                                            ? "red"
+                                            : item.severity === "MAJOR" || item.severity === "S2_HIGH"
+                                              ? "orange"
+                                              : "blue"
+                                    }
+                                >
+                                    {item.severity}
+                                </Tag>
+                            </Space>
+                            <div style={{ fontWeight: 600, fontSize: 12 }}>
+                                {item.context_task || "(Chưa nêu tác vụ)"}{" "}
+                                {item.screen_or_url ? <Text type="secondary">· {item.screen_or_url}</Text> : null}
+                            </div>
+                            <Paragraph style={{ margin: "4px 0", fontSize: 12 }}>
+                                {item.what_happened}
+                            </Paragraph>
+                            {item.suggestion && (
+                                <Text type="secondary" style={{ fontSize: 12, display: "block" }}>
+                                    Đề xuất: {item.suggestion}
+                                </Text>
+                            )}
+                            {item.evidence_anchors && item.evidence_anchors.length > 0 && (
+                                <Space wrap size={4} style={{ marginTop: 4 }}>
+                                    {item.evidence_anchors.slice(0, 3).map((anc) => (
+                                        <Tag
+                                            key={`${anc.stream}-${anc.seq}`}
+                                            style={{ fontSize: 11, cursor: "pointer" }}
+                                            onClick={() => onInspectAgent(item.agent_id)}
+                                        >
+                                            seq #{anc.seq} · {anc.action}
+                                        </Tag>
+                                    ))}
+                                </Space>
+                            )}
+                        </div>
+                    ))}
+                </Space>
+            )}
+        </Card>
+    );
     const renderRootCauseBucket = (
         title: string,
         color: string,
@@ -657,6 +768,125 @@ export const CompetencyEvaluationTab: React.FC<CompetencyEvaluationTabProps> = (
                     </Card>
                 </Col>
             </Row>
+
+            <Card
+                size="small"
+                title={
+                    <Space wrap>
+                        <InfoCircleOutlined style={{ color: "#1677ff" }} />
+                        <span>Tiếng nói Người dùng BQL &amp; Phát hiện Lỗ hổng (Sociological Debrief · Behavioral Triangulation)</span>
+                        {debriefSummary?.available && (
+                            <>
+                                <Tag color={debriefSummary.status === "COMPLETE" ? "green" : "orange"}>
+                                    {debriefSummary.status} ({debriefSummary.respondents_n}/{debriefSummary.eligible_bql_n} BQL)
+                                </Tag>
+                                <Tag color="blue">
+                                    {debriefSummary.cit_verified_count}/{debriefSummary.cit_total_count} CIT đối chứng log
+                                </Tag>
+                            </>
+                        )}
+                    </Space>
+                }
+            >
+                {!debriefSummary || !debriefSummary.available ? (
+                    <Alert
+                        type="info"
+                        showIcon
+                        message="Chưa có dữ liệu Phỏng vấn Cuối ca (Sociological Debrief)"
+                        description="Run này được chạy trước khi bật Sociological Debrief hoặc chưa kết thúc bước phỏng vấn cuối ca. Các Run mới mặc định bật Sociological Debrief để thu thập UMUX-Lite, SEQ, Workload, chất lượng CSKH và backlog CIT."
+                    />
+                ) : (
+                    <Space direction="vertical" size="middle" style={{ width: "100%" }}>
+                        {debriefSummary.bias_warnings_count > 0 && (
+                            <Alert
+                                type="warning"
+                                showIcon
+                                message={`Cảnh báo Thiên lệch Phản hồi (${debriefSummary.bias_warnings_count} nhân sự có ACQUIESCENCE_BIAS / CSKH_POS_BIAS)`}
+                                description="Phát hiện nhân sự chấm điểm hài lòng cao bất chấp hành vi thực tế có lỗi thao tác hoặc chưa hỏi CSKH EvidenceAtlas. Cần đối chiếu log thực thi (Triangulation) trước khi kết luận."
+                            />
+                        )}
+                        <Row gutter={[12, 12]}>
+                            <Col xs={12} sm={12} md={6}>
+                                <Card size="small">
+                                    <Text type="secondary">UMUX-Lite (0–100)</Text>
+                                    <div style={{ fontSize: 20, fontWeight: 700 }}>
+                                        {debriefSummary.umux_lite_mean !== null
+                                            ? debriefSummary.umux_lite_mean.toFixed(1)
+                                            : "N/A"}
+                                    </div>
+                                    <Text type="secondary" style={{ fontSize: 11 }}>
+                                        Hữu ích &amp; Dễ dùng (Lah 2020)
+                                    </Text>
+                                </Card>
+                            </Col>
+                            <Col xs={12} sm={12} md={6}>
+                                <Card size="small">
+                                    <Text type="secondary">SEQ Dễ thao tác (1–7)</Text>
+                                    <div style={{ fontSize: 20, fontWeight: 700 }}>
+                                        {debriefSummary.seq_mean !== null
+                                            ? debriefSummary.seq_mean.toFixed(2)
+                                            : "N/A"}
+                                    </div>
+                                    <Text type="secondary" style={{ fontSize: 11 }}>
+                                        Sauro &amp; Dumas 2009 (≥ 5.0 thuận tiện)
+                                    </Text>
+                                </Card>
+                            </Col>
+                            <Col xs={12} sm={12} md={6}>
+                                <Card size="small">
+                                    <Text type="secondary">Áp lực Workload (0–100)</Text>
+                                    <div style={{ fontSize: 20, fontWeight: 700 }}>
+                                        {debriefSummary.workload_subset_mean_100 !== null
+                                            ? debriefSummary.workload_subset_mean_100.toFixed(1)
+                                            : "N/A"}
+                                    </div>
+                                    <Text type="secondary" style={{ fontSize: 11 }}>
+                                        Effort: {debriefSummary.workload_effort_mean_100?.toFixed(0) ?? "N/A"} · Frustration:{" "}
+                                        {debriefSummary.workload_frustration_mean_100?.toFixed(0) ?? "N/A"}
+                                    </Text>
+                                </Card>
+                            </Col>
+                            <Col xs={12} sm={12} md={6}>
+                                <Card size="small">
+                                    <Text type="secondary">Chất lượng CSKH (D&amp;M 1–7)</Text>
+                                    <div style={{ fontSize: 20, fontWeight: 700 }}>
+                                        {debriefSummary.cskh_quality_mean !== null
+                                            ? debriefSummary.cskh_quality_mean.toFixed(2)
+                                            : "N/A"}
+                                    </div>
+                                    <Text type="secondary" style={{ fontSize: 11 }}>
+                                        Hợp lệ: {debriefSummary.cskh_valid_n} · CSKH lỗi toàn bộ: {debriefSummary.cskh_all_failed_n}
+                                    </Text>
+                                </Card>
+                            </Col>
+                        </Row>
+
+                        <Row gutter={[12, 12]}>
+                            <Col xs={24} md={8}>
+                                {renderCitBucket(
+                                    "Thiếu Tri thức CSKH (Knowledge Gaps)",
+                                    "orange",
+                                    debriefSummary.actionable_backlog.knowledge_gaps || []
+                                )}
+                            </Col>
+                            <Col xs={24} md={8}>
+                                {renderCitBucket(
+                                    "Lỗi UX Phần mềm (Software UX Bugs)",
+                                    "red",
+                                    debriefSummary.actionable_backlog.software_ux_bugs || []
+                                )}
+                            </Col>
+                            <Col xs={24} md={8}>
+                                {renderCitBucket(
+                                    "Tắc nghẽn Quy trình (Workflow Frictions)",
+                                    "blue",
+                                    debriefSummary.actionable_backlog.workflow_frictions || []
+                                )}
+                            </Col>
+                        </Row>
+                    </Space>
+                )}
+            </Card>
 
             <Card
                 size="small"

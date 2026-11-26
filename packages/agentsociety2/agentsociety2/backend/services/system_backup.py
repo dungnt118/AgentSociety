@@ -611,6 +611,9 @@ def export_backup_zip(
                     "pilot_mode": bool(p.pilot_mode),
                     "zone_map_image_rel": p.zone_map_image_rel,
                     "llm_config_id": p.llm_config_id,
+                    "enable_sociological_debrief": bool(
+                        getattr(p, "enable_sociological_debrief", True)
+                    ),
                     "enable_competency_prepost_quiz": bool(
                         getattr(p, "enable_competency_prepost_quiz", False)
                     ),
@@ -1808,6 +1811,9 @@ def execute_restore(
                         if "zone_map_image_rel" in ip and ip.get("zone_map_image_rel"):
                             existing.zone_map_image_rel = Path(str(ip["zone_map_image_rel"])).name
                         existing.llm_config_id = mapped_llm_id
+                        existing.enable_sociological_debrief = bool(
+                            ip.get("enable_sociological_debrief", True)
+                        )
                         existing.enable_competency_prepost_quiz = bool(
                             ip.get("enable_competency_prepost_quiz", False)
                         )
@@ -1842,6 +1848,9 @@ def execute_restore(
                                 else None
                             ),
                             llm_config_id=mapped_llm_id,
+                            enable_sociological_debrief=bool(
+                                ip.get("enable_sociological_debrief", True)
+                            ),
                             enable_competency_prepost_quiz=bool(
                                 ip.get("enable_competency_prepost_quiz", False)
                             ),

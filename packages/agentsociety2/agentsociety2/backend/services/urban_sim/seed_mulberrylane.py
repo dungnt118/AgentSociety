@@ -27,6 +27,16 @@ MULBERRYLANE_ZONES = [
     ("TOWER_E", "Tòa Horizon 1 & Khu tiện ích", "TOWER", "Tòa Horizon 1 (HZ1) và khu tiện ích chung MulberryLane.", 9),
 ]
 
+MULBERRYLANE_SCENARIO_BRIEF = """## Bối cảnh & Thực trạng Vận hành Khu đô thị MulberryLane
+Khu đô thị chung cư MulberryLane gồm 5 khối tháp (Zen Tower ZA/ZB, Fantasy Tower CT1C, Tropical Tower CT2C, Horizon 1) cùng sảnh lễ tân trung tâm và 2 tầng hầm gửi xe B1–B2. Ban Quản lý (12 nhân sự) mới tiếp nhận hệ thống phần mềm QLTN Demego với **kiến thức phần mềm ban đầu = 0**, đồng thời được hỗ trợ bởi Đội ngũ CSKH Thần Nông khi gặp vướng mắc quy trình/màn hình.
+
+### 4 Thực trạng Nổi bật trong Ca Mô phỏng
+1. **Kỳ chốt phí dịch vụ & Đối soát công nợ tháng 6 (Kế toán & Trợ lý):** Nhiều căn hộ phát sinh thắc mắc về hóa đơn phí quản lý/nước sinh hoạt tăng bất thường hoặc đã chuyển khoản QR/ngân hàng nhưng trên App cư dân vẫn hiển thị trạng thái chưa gạch nợ. Cần Kế toán Công nợ kiểm tra bảng kê công nợ, phiếu thu, gạch nợ và hướng dẫn cư dân.
+2. **Hạ tầng kỹ thuật & Thang máy (Kỹ thuật & Lễ tân):** Tháp Zen ZA ghi nhận áp lực nước giờ cao điểm yếu và đèn hành lang nhấp nháy; Tháp Fantasy CT1C phản ánh thang máy tầng cao (20–26) rung lắc/dừng kẹt nhẹ cần tiếp nhận phản ánh và giao việc bảo trì.
+3. **Kiểm soát Bãi xe & Thẻ cư dân (An ninh & Lễ tân):** Hầm B1 có tình trạng barie nhận diện biển số chậm, đầu đọc thẻ xe máy chập chờn và cư dân mới chuyển đến đăng ký thẻ xe/thẻ thang máy.
+4. **Mục tiêu đánh giá nền tảng:** Quan sát các điểm khó dùng trên giao diện QLTN và những quy trình/màn hình mà Kho Tri thức CSKH Thần Nông chưa hướng dẫn rõ hoặc hướng dẫn sai lệch so với thực tế phần mềm."""
+
+
 _BQL_ZERO_SOFTWARE_NOTE = (
     "NGUYÊN TẮC BẮT BUỘC VỀ PHẦN MỀM QLTN: Bạn có đầy đủ kiến thức chuyên môn ngành Vận hành Quản lý Tòa nhà theo chức danh, "
     "NHƯNG đây là ngày đầu tiên bạn tiếp cận phần mềm QLTN Demego — kiến thức sử dụng phần mềm mặc định bằng 0 (chưa biết menu, nút bấm hay biểu mẫu ở đâu). "
@@ -257,6 +267,29 @@ MULBERRYLANE_PERSONAS = [
             "Nhận lệnh từ Kỹ sư trưởng để kiểm tra sự cố thang máy / điều hòa hành lang.",
         ],
     },
+    {
+        "agent_id": 22,
+        "full_name": "Kế toán Công nợ & Phí dịch vụ (sim_ketoan)",
+        "role_code": "BQL_ACCOUNTANT",
+        "role_title": "Kế toán Công nợ & Phí dịch vụ",
+        "department": "Phòng Kế toán & Tài chính",
+        "group_type": "BQL",
+        "software_access_enabled": True,
+        "is_pilot_member": True,
+        "home_zone": "BQL_OFFICE",
+        "portal_url": "https://mulberrylane.sandbox.demego.vn",
+        "domain_knowledge_prompt": (
+            "Bạn là Kế toán Công nợ & Phí dịch vụ chung cư MulberryLane. "
+            "Nghiệp vụ: tra cứu công nợ căn hộ, kiểm tra thông báo phí quản lý/điện/nước/gửi xe hàng tháng, kiểm tra phiếu thu/hóa đơn điện tử, "
+            "đối soát phản ánh chuyển khoản nhầm hoặc chậm gạch nợ do Lễ tân chuyển tới, và phối hợp Trợ lý/Giám đốc trong kỳ chốt phí. "
+            "TUYỆT ĐỐI giữ nguyên tắc SAFE_WRITE trên môi trường Sandbox: chỉ tra cứu, tạo nháp hoặc ghi chú kiểm thử gắn [SIM-BQL], tuyệt đối không chốt sổ kỳ kế toán, không xóa hàng loạt hóa đơn hay khóa tài khoản. "
+            + _BQL_ZERO_SOFTWARE_NOTE
+        ),
+        "initial_tasks": [
+            "Đăng nhập phần mềm QLTN, mở phân hệ Kế toán / Tài chính / Công nợ phí dịch vụ (nhắn hỏi Đội ngũ hỗ trợ / CSKH Thần Nông nếu không thấy menu hoặc chức năng).",
+            "Kiểm tra tình trạng công nợ các căn hộ trong đợt chốt phí tháng 6, kiểm tra hộp thư (observe_urban_inbox) tiếp nhận phản ánh hóa đơn/gạch nợ từ Lễ tân và phản hồi hướng xử lý rõ ràng.",
+        ],
+    },
     # ==================== 10 CƯ DÂN CHỦ HỘ THẬT TỪ QLTN-V2 (TỰ SINH, KHỚP 100% HỒ SƠ) ====================
     {
         "agent_id": 12,
@@ -450,8 +483,13 @@ MULBERRYLANE_PERSONAS = [
 ]
 
 
+ACCOUNTING_PERSONA_TEMPLATE = next(
+    item for item in MULBERRYLANE_PERSONAS if item["role_code"] == "BQL_ACCOUNTANT"
+)
+
+
 def ensure_mulberrylane_seed(workspace_root: Path | None = None) -> UrbanSimProject:
-    """Idempotently seed the default MulberryLane project (21 personas, 9 zones, Atlas config)."""
+    """Idempotently seed the default MulberryLane project (22 personas, 9 zones, Atlas config)."""
     engine = get_engine(workspace_root)
     with Session(engine) as session:
         existing = session.exec(
@@ -462,12 +500,8 @@ def ensure_mulberrylane_seed(workspace_root: Path | None = None) -> UrbanSimProj
 
         project = UrbanSimProject(
             slug="mulberrylane",
-            name="Chung cư MulberryLane — Vận hành Toàn cảnh (21 Persona)",
-            description=(
-                "Dự án mẫu mô phỏng vận hành khu đô thị MulberryLane (https://mulberrylane.sandbox.demego.vn): "
-                "11 nhân sự BQL bắt đầu dùng phần mềm từ con số 0 + tích hợp cổng CSKH EvidenceAtlas (https://atlas.demego.vn) "
-                "và 10 cư dân chủ hộ tương tác qua Lễ tân phát sinh sự vụ thực tế."
-            ),
+            name="Chung cư MulberryLane — Vận hành Toàn cảnh (22 Persona)",
+            description=MULBERRYLANE_SCENARIO_BRIEF,
             default_portal_url="https://mulberrylane.sandbox.demego.vn",
             router_type="react",
             num_steps=8,
@@ -476,6 +510,7 @@ def ensure_mulberrylane_seed(workspace_root: Path | None = None) -> UrbanSimProj
             max_react_turns=10,
             max_cost_usd_per_run=5.0,
             pilot_mode=True,
+            enable_sociological_debrief=True,
         )
         session.add(project)
         session.flush()

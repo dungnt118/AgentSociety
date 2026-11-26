@@ -24,6 +24,7 @@ def react_tool_schemas(
     enable_memory: bool = True,
     disable_skills: bool = False,
     readonly: bool = False,
+    allow_env_tools: bool = True,
     overrides: dict[str, dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     """为 ReAct 动作构建 OpenAI tool schema。
@@ -227,40 +228,41 @@ def react_tool_schemas(
             },
             ["skill_name"],
         )
-    add(
-        "ask_env",
-        (
-            "Observe or act in the simulation environment through RouterBase.ask. "
-            "Environment calls always run in template/cache mode: write `instruction` "
-            "as a reusable template with stable wording, and put changing runtime "
-            "values in `variables` instead of embedding them directly in the text."
-        ),
-        {
-            "instruction": {
-                "type": "string",
-                "description": (
-                    "Reusable natural-language template passed to RouterBase.ask. "
-                    "Keep the wording stable across similar calls and refer to "
-                    "dynamic values by variable name, e.g. 'move person {person_id} "
-                    "to home AOI {home_aoi}'."
-                ),
+    if allow_env_tools:
+        add(
+            "ask_env",
+            (
+                "Observe or act in the simulation environment through RouterBase.ask. "
+                "Environment calls always run in template/cache mode: write `instruction` "
+                "as a reusable template with stable wording, and put changing runtime "
+                "values in `variables` instead of embedding them directly in the text."
+            ),
+            {
+                "instruction": {
+                    "type": "string",
+                    "description": (
+                        "Reusable natural-language template passed to RouterBase.ask. "
+                        "Keep the wording stable across similar calls and refer to "
+                        "dynamic values by variable name, e.g. 'move person {person_id} "
+                        "to home AOI {home_aoi}'."
+                    ),
+                },
+                "readonly": {"type": "boolean", "default": False},
+                "ctx": {"type": "object", "additionalProperties": True},
+                "variables": {
+                    "type": "object",
+                    "additionalProperties": True,
+                    "description": (
+                        "Required mapping of every changing value used by the instruction "
+                        "template. Include ids, categories, radii, coordinates, modes, "
+                        "and other literals here, e.g. {'person_id': 35, "
+                        "'home_aoi': 500030277, 'mode': 'walking'}. Use {} only when "
+                        "the instruction has no dynamic values."
+                    ),
+                },
             },
-            "readonly": {"type": "boolean", "default": False},
-            "ctx": {"type": "object", "additionalProperties": True},
-            "variables": {
-                "type": "object",
-                "additionalProperties": True,
-                "description": (
-                    "Required mapping of every changing value used by the instruction "
-                    "template. Include ids, categories, radii, coordinates, modes, "
-                    "and other literals here, e.g. {'person_id': 35, "
-                    "'home_aoi': 500030277, 'mode': 'walking'}. Use {} only when "
-                    "the instruction has no dynamic values."
-                ),
-            },
-        },
-        ["instruction", "variables"],
-    )
+            ["instruction", "variables"],
+        )
     if enable_todo_list:
         add(
             "todo_list",
@@ -351,17 +353,18 @@ def react_tool_schemas(
             else:
                 tools.append(schema)
     if readonly:
-        allowed = readonly_tool_names()
+        allowed = readonly_tool_names(allow_env_tools=allow_env_tools)
         return [item for item in tools if item["function"]["name"] in allowed]
     return tools
 
 
-def readonly_tool_names() -> set[str]:
+def readonly_tool_names(*, allow_env_tools: bool = True) -> set[str]:
     """返回 readonly 外部 ask 请求允许使用的工具集合。
 
+    :param allow_env_tools: 是否允许调用 ``ask_env`` 交互环境。
     :returns: 不会直接修改仿真状态的工具名集合。
     """
-    return {
+    names = {
         "finish",
         "read",
         "list",
@@ -377,3 +380,6 @@ def readonly_tool_names() -> set[str]:
         "memory_read",
         "todo_list",
     }
+    if not allow_env_tools:
+        names.discard("ask_env")
+    return names

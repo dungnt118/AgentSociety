@@ -891,6 +891,8 @@ class ExperimentRunner:
                             questionnaire_id=step.questionnaire_id,
                             title=step.title or "",
                             description=step.description or "",
+                            allow_env_tools=step.allow_env_tools,
+                            retry_on_parse_error=step.retry_on_parse_error,
                             questions=step.questions,
                         )
                         logger.info(

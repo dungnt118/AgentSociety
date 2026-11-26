@@ -73,6 +73,7 @@ const STANDARD_ROLE_SUGGESTIONS: Array<{ role_code: string; role_title: string }
     { role_code: "BQL_DIRECTOR", role_title: "Giám đốc Dự án" },
     { role_code: "BQL_ASSISTANT", role_title: "Trợ lý Dự án" },
     { role_code: "BQL_RECEPTIONIST", role_title: "Lễ tân BQL" },
+    { role_code: "BQL_ACCOUNTANT", role_title: "Kế toán Công nợ & Phí dịch vụ" },
     { role_code: "SEC_LEAD", role_title: "Tổ trưởng Bảo vệ" },
     { role_code: "SEC_STAFF", role_title: "Nhân viên Bảo vệ" },
     { role_code: "ENG_LEAD", role_title: "Tổ trưởng Kỹ thuật" },
@@ -957,13 +958,20 @@ export const RubricJsonEditor: React.FC<RubricJsonEditorProps> = ({
                                             <strong>{defaultQuizCount} câu hỏi Pre/Post Quiz</strong> mặc định khi
                                             trường này để trống. Các bảng bên dưới chỉ mang tính xem trước.
                                         </div>
-                                        <Space wrap>
+                                        <div style={{ display: "flex", flexWrap: "wrap", gap: 8, maxWidth: "100%" }}>
                                             <Button
                                                 type="primary"
                                                 size="small"
                                                 icon={<EditOutlined />}
                                                 disabled={disabled}
                                                 onClick={handleLoadDefaultTemplate}
+                                                style={{
+                                                    whiteSpace: "normal",
+                                                    height: "auto",
+                                                    paddingBlock: 4,
+                                                    maxWidth: "100%",
+                                                    textAlign: "left",
+                                                }}
                                             >
                                                 Tùy chỉnh từ chuẩn MulberryLane
                                             </Button>
@@ -972,10 +980,17 @@ export const RubricJsonEditor: React.FC<RubricJsonEditorProps> = ({
                                                 icon={<FileAddOutlined />}
                                                 disabled={disabled}
                                                 onClick={handleCreateEmptyCustom}
+                                                style={{
+                                                    whiteSpace: "normal",
+                                                    height: "auto",
+                                                    paddingBlock: 4,
+                                                    maxWidth: "100%",
+                                                    textAlign: "left",
+                                                }}
                                             >
-                                                Tạo Rubric trống (Phần mềm khác)
+                                                Tạo Rubric trống (Hệ thống khác)
                                             </Button>
-                                        </Space>
+                                        </div>
                                     </Space>
                                 }
                             />
@@ -993,7 +1008,7 @@ export const RubricJsonEditor: React.FC<RubricJsonEditorProps> = ({
                                                 dataSource={roleRows}
                                                 columns={roleColumns(true)}
                                                 pagination={false}
-                                                scroll={{ x: "max-content" }}
+                                                scroll={{ x: 860 }}
                                             />
                                         ),
                                     },
@@ -1010,7 +1025,7 @@ export const RubricJsonEditor: React.FC<RubricJsonEditorProps> = ({
                                                 }))}
                                                 columns={questionColumns(true)}
                                                 pagination={false}
-                                                scroll={{ x: "max-content" }}
+                                                scroll={{ x: 860 }}
                                             />
                                         ),
                                     },
@@ -1057,7 +1072,7 @@ export const RubricJsonEditor: React.FC<RubricJsonEditorProps> = ({
                                                 dataSource={roleRows}
                                                 columns={roleColumns(false)}
                                                 pagination={false}
-                                                scroll={{ x: "max-content" }}
+                                                scroll={{ x: 860 }}
                                                 locale={{
                                                     emptyText:
                                                         "Chưa có vai trò tùy biến nào. Bấm 'Thêm vai trò' hoặc 'Nạp chuẩn mặc định'.",
@@ -1104,7 +1119,7 @@ export const RubricJsonEditor: React.FC<RubricJsonEditorProps> = ({
                                                 }))}
                                                 columns={questionColumns(false)}
                                                 pagination={false}
-                                                scroll={{ x: "max-content" }}
+                                                scroll={{ x: 860 }}
                                                 locale={{
                                                     emptyText:
                                                         "Chưa có câu hỏi tùy biến (sẽ fallback về 6 câu chuẩn QLTN v2 khi đánh giá).",

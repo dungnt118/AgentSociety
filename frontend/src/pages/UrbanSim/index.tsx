@@ -15,6 +15,7 @@ import {
     Button,
     Card,
     Col,
+    Collapse,
     Form,
     Grid,
     Input,
@@ -73,6 +74,7 @@ interface ProjectFormValues {
     max_cost_usd_per_run: number;
     pilot_mode: boolean;
     llm_config_id?: string | null;
+    enable_sociological_debrief?: boolean;
     enable_competency_prepost_quiz?: boolean;
     competency_rubric_json?: string | null;
 }
@@ -83,6 +85,7 @@ interface NewProjectValues {
     description?: string;
     default_portal_url: string;
     seed_mulberrylane_template: boolean;
+    enable_sociological_debrief?: boolean;
 }
 
 function formatDurationShort(totalSeconds: number): string {
@@ -174,6 +177,7 @@ export default function UrbanSimConsolePage() {
     const [llmConfigs, setLlmConfigs] = useState<Array<{ id: string; name: string; modelLabel: string }>>([]);
     const [saving, setSaving] = useState(false);
     const [actionLoading, setActionLoading] = useState(false);
+    const [insertingTemplate, setInsertingTemplate] = useState(false);
     const [createModalOpen, setCreateModalOpen] = useState(false);
     const [form] = Form.useForm<ProjectFormValues>();
     const [createForm] = Form.useForm<NewProjectValues>();
@@ -182,6 +186,9 @@ export default function UrbanSimConsolePage() {
     const watchedStartTimeIso = Form.useWatch("start_time_iso", form);
 
     const selectedProject = projects.find((p) => p.id === selectedId) || null;
+    const totalPersonasCount = selectedProject?.stats?.total_personas ?? 22;
+    const activePersonasCount = selectedProject?.stats?.active_personas ?? totalPersonasCount;
+    const pilotPersonasCount = selectedProject?.stats?.pilot_personas ?? 10;
     const suggestedRoles = useMemo(() => {
         const map = new Map<string, string>();
         for (const p of personas) {
@@ -239,6 +246,7 @@ export default function UrbanSimConsolePage() {
             max_cost_usd_per_run: projDetail.max_cost_usd_per_run,
             pilot_mode: projDetail.pilot_mode,
             llm_config_id: projDetail.llm_config_id ?? undefined,
+            enable_sociological_debrief: projDetail.enable_sociological_debrief ?? true,
             enable_competency_prepost_quiz: Boolean(projDetail.enable_competency_prepost_quiz),
             competency_rubric_json: projDetail.competency_rubric_json ?? "",
         });
@@ -316,6 +324,7 @@ export default function UrbanSimConsolePage() {
             await urbanSimApi.updateProject(selectedId, {
                 ...values,
                 llm_config_id: values.llm_config_id ?? null,
+                enable_sociological_debrief: values.enable_sociological_debrief ?? true,
                 enable_competency_prepost_quiz: Boolean(values.enable_competency_prepost_quiz),
                 competency_rubric_json: cleanRubric ? cleanRubric : null,
             });
@@ -328,9 +337,33 @@ export default function UrbanSimConsolePage() {
         }
     };
 
+    const handleInsertScenarioTemplate = async (targetForm: "edit" | "create") => {
+        setInsertingTemplate(true);
+        try {
+            const tpl = await urbanSimApi.getScenarioBriefTemplate();
+            if (!tpl) {
+                message.warning("Backend chưa có mẫu thực trạng mặc định.");
+                return;
+            }
+            if (targetForm === "edit") {
+                form.setFieldValue("description", tpl);
+            } else {
+                createForm.setFieldValue("description", tpl);
+            }
+            message.success("Đã chèn mẫu Thực trạng Khu đô thị chi tiết.");
+        } catch (err) {
+            message.error(err instanceof Error ? err.message : "Không tải được mẫu thực trạng");
+        } finally {
+            setInsertingTemplate(false);
+        }
+    };
+
     const handleCreateProject = async (values: NewProjectValues) => {
         try {
-            const created = await urbanSimApi.createProject(values);
+            const created = await urbanSimApi.createProject({
+                ...values,
+                enable_sociological_debrief: values.enable_sociological_debrief ?? true,
+            });
             const list = await urbanSimApi.listProjects();
             setProjects(list);
             setSelectedId(created.id);
@@ -767,11 +800,14 @@ export default function UrbanSimConsolePage() {
                                     <Col xs={12} sm={12} md={5}>
                                         <Form.Item
                                             name="pilot_mode"
-                                            label="Chế độ Pilot (9 tác nhân)"
+                                            label={`Chế độ Pilot (${pilotPersonasCount} tác nhân)`}
                                             valuePropName="checked"
-                                            extra="Pilot chạy 9 tác nhân nòng cốt để test nhanh; Full chạy đủ 21 tác nhân."
+                                            extra={`Pilot chạy ${pilotPersonasCount} tác nhân nòng cốt để test nhanh; Full chạy đủ ${activePersonasCount} tác nhân.`}
                                         >
-                                            <Switch checkedChildren="Pilot (9)" unCheckedChildren="Full (21)" />
+                                            <Switch
+                                                checkedChildren={`Pilot (${pilotPersonasCount})`}
+                                                unCheckedChildren={`Full (${activePersonasCount})`}
+                                            />
                                         </Form.Item>
                                     </Col>
                                     <Col xs={24} md={12}>
@@ -842,27 +878,34 @@ export default function UrbanSimConsolePage() {
                                         <Form.Item
                                             name="description"
                                             label={
-                                                <span>
-                                                    Mô tả kịch bản (Markdown RichText)
+                                                <Space wrap size={6}>
+                                                    <span>Bối cảnh &amp; Thực trạng Khu đô thị (Scenario Brief)</span>
+                                                    <Tag color="green" style={{ margin: 0 }}>Nạp vào Agent</Tag>
                                                     <FieldHelpPopover
-                                                        title="Mô tả kịch bản mô phỏng"
+                                                        title="Vai trò của Bối cảnh & Thực trạng Khu đô thị"
                                                         content={
                                                             <Space direction="vertical" size={6}>
                                                                 <div>
-                                                                    Tài liệu bối cảnh chung của dự án: mục tiêu vận hành, nhóm nhân sự tham gia, phân hệ phần mềm cần thử nghiệm và quy trình phối hợp BQL ↔ Cư dân ↔ EvidenceAtlas.
+                                                                    Khác với mô tả hành chính thông thường, nội dung này được <strong>nạp trực tiếp vào nhận thức ngữ cảnh (Environment Context / building_context.scenario_brief)</strong> giúp mọi nhân sự BQL và Cư dân nắm đúng thực trạng khu đô thị trước khi hành động.
                                                                 </div>
                                                                 <div>
-                                                                    <strong>Ví dụ cấu trúc nên viết:</strong>
-                                                                    <br />• <code>## Bối cảnh &amp; Mục tiêu</code> (link cổng QLTN, quy mô khu đô thị)
-                                                                    <br />• <code>### Kịch bản chính</code> (danh sách tình huống phát sinh)
-                                                                    <br />• <code>```mermaid</code> (sơ đồ luồng xử lý nếu cần)
+                                                                    <strong>Ví dụ nên viết cụ thể:</strong>
+                                                                    <br />• Quy mô tòa nhà, hạng mục đang vận hành &amp; tồn đọng thực tế (phí công nợ, thang máy, PCCC, bảo trì)
+                                                                    <br />• Các vấn đề nổi cộm từ cư dân &amp; quy trình phối hợp BQL ↔ Kế toán ↔ CSKH EvidenceAtlas.
                                                                 </div>
                                                             </Space>
                                                         }
                                                     />
-                                                </span>
+                                                    <Button
+                                                        size="small"
+                                                        loading={insertingTemplate}
+                                                        onClick={() => void handleInsertScenarioTemplate("edit")}
+                                                    >
+                                                        Chèn mẫu Thực trạng chi tiết
+                                                    </Button>
+                                                </Space>
                                             }
-                                            extra="Dùng Markdown để trình bày bối cảnh, mục tiêu vận hành, danh sách tình huống hoặc sơ đồ luồng (bấm Song song / Xem trước để kiểm tra định dạng)."
+                                            extra="Viết càng cụ thể các thực trạng tại khu đô thị càng giúp Agent phản ánh sát nghiệp vụ thực tế (giới hạn 4.000 ký tự khi nạp vào runtime)."
                                         >
                                             <MarkdownRichTextEditor
                                                 minRows={5}
@@ -873,25 +916,21 @@ export default function UrbanSimConsolePage() {
                                     </Col>
                                     <Col xs={24} md={24}>
                                         <Form.Item
-                                            name="enable_competency_prepost_quiz"
+                                            name="enable_sociological_debrief"
                                             label={
                                                 <span>
-                                                    Bật khảo sát Tri thức Pre/Post Quiz (Marx-Cummings c)
+                                                    Bật Phỏng vấn Cuối ca &amp; Thu thập Lỗ hổng Tri thức/Phần mềm (Sociological Debrief)
                                                     <FieldHelpPopover
-                                                        title="Cơ chế Khảo sát Tri thức Pre/Post Quiz"
+                                                        title="Đo lường Xã hội học & Triangulation Hậu nghiệm"
                                                         content={
                                                             <Space direction="vertical" size={6}>
                                                                 <div>
-                                                                    Khi bật, hệ thống tự động chèn <strong>2 bài trắc nghiệm</strong> vào Run mới cho các nhân sự BQL được cấp quyền dùng phần mềm (<code>software_access_enabled</code>):
+                                                                    Mặc định <strong>BẬT</strong>. Cuối mỗi ca Run mới, các nhân sự BQL trả lời bảng hỏi xã hội học ngắn gọn (không phụ thuộc bộ đáp án quiz cứng):
                                                                 </div>
                                                                 <div>
-                                                                    <strong>1. Pre-Test (Tick 0):</strong> Đo kiến thức nền trước khi tác nhân bắt đầu thao tác QLTN.
-                                                                </div>
-                                                                <div>
-                                                                    <strong>2. Post-Test (Sau Tick cuối):</strong> Chế độ <em>Open-Notes Retrieval</em> — tác nhân được phép tra cứu trí nhớ &amp; ghi chú <code>notes/</code> đã tích lũy sau khi dùng QLTN và hỏi CSKH EvidenceAtlas.
-                                                                </div>
-                                                                <div>
-                                                                    <strong>Mã trả lời:</strong> <code>OPT_A..OPT_D</code> hoặc <code>CHUA_BIET</code> (đo độ trung thực nhận thức, tránh đoán bừa) để tính chỉ số tiến bộ chuẩn hóa <strong>Marx-Cummings c</strong> ở tab <em>Đánh giá Năng lực</em>.
+                                                                    • <strong>UMUX-Lite (0–100)</strong> &amp; <strong>SEQ (1–7)</strong>: Mức độ hữu ích &amp; dễ sử dụng phần mềm QLTN.<br />
+                                                                    • <strong>Workload Subset</strong> &amp; <strong>DeLone &amp; McLean CSKH Quality</strong>: Nỗ lực/áp lực &amp; chất lượng hỗ trợ từ EvidenceAtlas.<br />
+                                                                    • <strong>Critical Incident Technique (CIT ≤ 3 sự cố/nhân sự)</strong>: Tự động đối chiếu hậu kiểm với log thực tế (Behavioral Triangulation) để xuất backlog Thiếu Tri thức CSKH, Lỗi UX Phần mềm &amp; Tắc nghẽn Quy trình.
                                                                 </div>
                                                             </Space>
                                                         }
@@ -899,42 +938,91 @@ export default function UrbanSimConsolePage() {
                                                 </span>
                                             }
                                             valuePropName="checked"
-                                            extra="Ví dụ: Tick 0 tác nhân chọn CHUA_BIET/sai (Pre 20%) → sau khi hỏi CSKH Atlas và thao tác QLTN đạt Post 83% (c = +0.79). Chỉ áp dụng ở Run mới cho nhóm BQL dùng phần mềm."
+                                            extra="Khuyên BẬT để thu thập mức độ hài lòng (UMUX-Lite, SEQ, Workload) và danh sách sự cố CIT đã đối chứng log QLTN/CSKH."
                                         >
-                                            <Switch checkedChildren="Bật Pre/Post" unCheckedChildren="Tắt" />
+                                            <Switch checkedChildren="Đang bật (Mặc định)" unCheckedChildren="Tắt" />
                                         </Form.Item>
                                     </Col>
                                     <Col xs={24} md={24}>
-                                        <Form.Item
-                                            name="competency_rubric_json"
-                                            label={
-                                                <span>
-                                                    Rubric phân hệ &amp; bộ câu hỏi tùy biến (&lt;= 64KB)
-                                                    <FieldHelpPopover
-                                                        title="Cách cấu hình Rubric Phân hệ & Bộ câu hỏi"
-                                                        content={
-                                                            <Space direction="vertical" size={6}>
-                                                                <div>
-                                                                    Dùng để tùy biến <strong>quy chuẩn đánh giá từng vai trò BQL</strong> (<code>roles</code>) và <strong>ngân hàng câu hỏi Pre/Post Quiz</strong> (<code>quiz_questions</code>) cho dự án mới ngoài MulberryLane.
-                                                                </div>
-                                                                <div>
-                                                                    <strong>Nếu để trống:</strong> Hệ thống tự nạp chuẩn mặc định MulberryLane (8 vai trò gồm fallback <code>BQL_STAFF</code> và 6 câu hỏi QLTN v2) từ Backend.
-                                                                </div>
-                                                                <div>
-                                                                    <strong>Cấu hình trực quan &amp; Import/Export:</strong> Cho phép thêm/sửa vai trò và câu hỏi bằng bảng biểu trực quan đồng bộ 2 chiều với mã nguồn JSON hoặc Import/Export tệp <code>.json</code>.
-                                                                </div>
-                                                            </Space>
-                                                        }
-                                                    />
-                                                </span>
-                                            }
-                                            extra="Để trống để dùng chuẩn mặc định MulberryLane (đọc trực tiếp từ Backend). Bấm 'Tùy chỉnh từ chuẩn MulberryLane', 'Tạo Rubric trống' hoặc 'Import JSON' để thiết lập cho dự án khác."
-                                        >
-                                            <RubricJsonEditor
-                                                projectSlug={selectedProject?.slug}
-                                                suggestedRoles={suggestedRoles}
-                                            />
-                                        </Form.Item>
+                                        <Collapse
+                                            size="small"
+                                            style={{ marginBottom: 16 }}
+                                            items={[
+                                                {
+                                                    key: "advanced-competency-quiz",
+                                                    label: "Cấu hình Đánh giá Nâng cao (Tùy chọn: Pre/Post Quiz & Rubric Phân hệ)",
+                                                    children: (
+                                                        <Row gutter={12}>
+                                                            <Col xs={24} md={24}>
+                                                                <Form.Item
+                                                                    name="enable_competency_prepost_quiz"
+                                                                    label={
+                                                                        <span>
+                                                                            Bật khảo sát Tri thức Pre/Post Quiz (Marx-Cummings c)
+                                                                            <FieldHelpPopover
+                                                                                title="Cơ chế Khảo sát Tri thức Pre/Post Quiz"
+                                                                                content={
+                                                                                    <Space direction="vertical" size={6}>
+                                                                                        <div>
+                                                                                            Tùy chọn mở rộng khi cần đo tiến bộ theo bộ câu hỏi mẫu cố định. Khi bật, hệ thống chèn <strong>2 bài trắc nghiệm</strong> vào Run mới cho nhóm BQL dùng phần mềm (<code>software_access_enabled</code>):
+                                                                                        </div>
+                                                                                        <div>
+                                                                                            <strong>1. Pre-Test (Tick 0):</strong> Đo kiến thức nền trước khi tác nhân bắt đầu thao tác QLTN.
+                                                                                        </div>
+                                                                                        <div>
+                                                                                            <strong>2. Post-Test (Sau Tick cuối):</strong> Chế độ <em>Open-Notes Retrieval</em> — tác nhân được phép tra cứu trí nhớ &amp; ghi chú <code>notes/</code> đã tích lũy sau khi dùng QLTN và hỏi CSKH EvidenceAtlas.
+                                                                                        </div>
+                                                                                        <div>
+                                                                                            <strong>Mã trả lời:</strong> <code>OPT_A..OPT_D</code> hoặc <code>CHUA_BIET</code> (đo độ trung thực nhận thức, tránh đoán bừa) để tính chỉ số tiến bộ chuẩn hóa <strong>Marx-Cummings c</strong> ở tab <em>Đánh giá Năng lực</em>.
+                                                                                        </div>
+                                                                                    </Space>
+                                                                                }
+                                                                            />
+                                                                        </span>
+                                                                    }
+                                                                    valuePropName="checked"
+                                                                    extra="Mặc định TẮT vì có thể bộ tri thức nạp vào chưa hoàn chỉnh. Chỉ bật khi bạn muốn đo lường theo bộ câu hỏi đáp án cố định bên dưới."
+                                                                >
+                                                                    <Switch checkedChildren="Bật Pre/Post" unCheckedChildren="Tắt" />
+                                                                </Form.Item>
+                                                            </Col>
+                                                            <Col xs={24} md={24}>
+                                                                <Form.Item
+                                                                    name="competency_rubric_json"
+                                                                    label={
+                                                                        <span>
+                                                                            Rubric phân hệ &amp; bộ câu hỏi tùy biến (&lt;= 64KB)
+                                                                            <FieldHelpPopover
+                                                                                title="Cách cấu hình Rubric Phân hệ & Bộ câu hỏi"
+                                                                                content={
+                                                                                    <Space direction="vertical" size={6}>
+                                                                                        <div>
+                                                                                            Dùng để tùy biến <strong>quy chuẩn đánh giá từng vai trò BQL</strong> (<code>roles</code>) và <strong>ngân hàng câu hỏi Pre/Post Quiz</strong> (<code>quiz_questions</code>) cho dự án mới ngoài MulberryLane.
+                                                                                        </div>
+                                                                                        <div>
+                                                                                            <strong>Nếu để trống:</strong> Hệ thống tự nạp chuẩn mặc định MulberryLane (bao gồm cả <code>BQL_ACCOUNTANT</code> và fallback <code>BQL_STAFF</code>) từ Backend.
+                                                                                        </div>
+                                                                                        <div>
+                                                                                            <strong>Cấu hình trực quan &amp; Import/Export:</strong> Cho phép thêm/sửa vai trò và câu hỏi bằng bảng biểu trực quan đồng bộ 2 chiều với mã nguồn JSON hoặc Import/Export tệp <code>.json</code>.
+                                                                                        </div>
+                                                                                    </Space>
+                                                                                }
+                                                                            />
+                                                                        </span>
+                                                                    }
+                                                                    extra="Để trống để dùng chuẩn mặc định MulberryLane (đọc trực tiếp từ Backend). Bấm 'Tùy chỉnh từ chuẩn MulberryLane', 'Tạo Rubric trống' hoặc 'Import JSON' để thiết lập cho dự án khác."
+                                                                >
+                                                                    <RubricJsonEditor
+                                                                        projectSlug={selectedProject?.slug}
+                                                                        suggestedRoles={suggestedRoles}
+                                                                    />
+                                                                </Form.Item>
+                                                            </Col>
+                                                        </Row>
+                                                    ),
+                                                },
+                                            ]}
+                                        />
                                     </Col>
                                 </Row>
                                 <Button type="primary" htmlType="submit" icon={<SaveOutlined />} loading={saving}>
@@ -980,6 +1068,7 @@ export default function UrbanSimConsolePage() {
                     initialValues={{
                         default_portal_url: "https://mulberrylane.sandbox.demego.vn",
                         seed_mulberrylane_template: true,
+                        enable_sociological_debrief: true,
                     }}
                     onFinish={handleCreateProject}
                 >
@@ -1001,8 +1090,20 @@ export default function UrbanSimConsolePage() {
                     </Form.Item>
                     <Form.Item
                         name="description"
-                        label="Mô tả kịch bản (Markdown RichText)"
-                        extra="Ghi rõ bối cảnh vận hành, mục tiêu thử nghiệm hoặc kịch bản mẫu bằng Markdown."
+                        label={
+                            <Space wrap size={6}>
+                                <span>Bối cảnh &amp; Thực trạng Khu đô thị (Scenario Brief)</span>
+                                <Tag color="green" style={{ margin: 0 }}>Nạp vào Agent</Tag>
+                                <Button
+                                    size="small"
+                                    loading={insertingTemplate}
+                                    onClick={() => void handleInsertScenarioTemplate("create")}
+                                >
+                                    Chèn mẫu Thực trạng chi tiết
+                                </Button>
+                            </Space>
+                        }
+                        extra="Ghi rõ thực trạng khu đô thị, các nhóm vấn đề nổi cộm và đầu việc tài chính/vận hành để Agent nhận thức bối cảnh thực tế."
                     >
                         <MarkdownRichTextEditor
                             minRows={4}
@@ -1020,9 +1121,9 @@ export default function UrbanSimConsolePage() {
                     </Form.Item>
                     <Form.Item
                         name="seed_mulberrylane_template"
-                        label="Nạp sẵn khung 21 Persona & 9 Zone mẫu từ MulberryLane"
+                        label="Nạp sẵn khung Persona mẫu (12 BQL gồm Kế toán Công nợ + 10 Cư dân) & 9 Zone MulberryLane"
                         valuePropName="checked"
-                        extra="Bật để tạo sẵn 11 nhân sự BQL + 10 cư dân và sơ đồ 9 khu vực mẫu, giúp chạy thử ngay."
+                        extra="Bật để tạo sẵn 12 nhân sự BQL + 10 cư dân và sơ đồ 9 khu vực mẫu, giúp chạy thử ngay."
                     >
                         <Switch />
                     </Form.Item>

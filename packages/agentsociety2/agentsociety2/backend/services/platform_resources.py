@@ -507,7 +507,7 @@ def ensure_platform_seed(workspace_root: Path | None = None) -> None:
             citizen_tpl_id = citizen_tpl.id
             sup_tpl_id = sup_tpl.id
 
-        # 4. Seed Agent Profiles from MulberryLane 21 Personas
+        # 4. Seed Agent Profiles from MulberryLane 22 Personas
         profile_path = "agent_profiles/default/mulberrylane_21_personas.json"
         if session.exec(select(PlatformAgentProfile)).first() is None:
             personas = (
@@ -534,7 +534,7 @@ def ensure_platform_seed(workspace_root: Path | None = None) -> None:
             ]
             session.add(
                 PlatformAgentProfile(
-                    name="MulberryLane — 21 Persona (11 BQL + 10 Cư dân)",
+                    name="MulberryLane — 22 Persona (12 BQL + 10 Cư dân)",
                     description="Hồ sơ nhân khẩu & vai trò vận hành tòa nhà MulberryLane đồng bộ trực tiếp từ SQLite UrbanSim.",
                     agent_type="citizen",
                     file_path=profile_path,
@@ -549,10 +549,10 @@ def ensure_platform_seed(workspace_root: Path | None = None) -> None:
                 "citizens": [
                     {
                         "agent_class": "PersonAgent",
-                        "number": 21,
+                        "number": 22,
                         "template_id": citizen_tpl_id,
                         "memory_from_file": profile_path,
-                        "agent_params": {"bql_count": 11, "resident_count": 10},
+                        "agent_params": {"bql_count": 12, "resident_count": 10},
                     }
                 ],
                 "supervisor": {
@@ -563,7 +563,7 @@ def ensure_platform_seed(workspace_root: Path | None = None) -> None:
             }
             session.add(
                 PlatformAgentConfig(
-                    name="Đội hình MulberryLane (11 BQL + 10 Cư dân)",
+                    name="Đội hình MulberryLane (12 BQL + 10 Cư dân)",
                     description="Cấu hình tập thể nhân sự Ban Quản lý (0 kiến thức QLTN) và Chủ hộ cư dân MulberryLane.",
                     config_json=json.dumps(cfg, ensure_ascii=False),
                 )
