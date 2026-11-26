@@ -1,0 +1,100 @@
+# =============================================================================
+# AGENTSOCIETY2 - PORTAINER STACK DEFINITION (DOCKER COMPOSE)
+# Dùng để Copy & Update trực tiếp qua Portainer Web UI hoặc deploy/portainer-deploy.mjs
+# Không đặt top-level `name:` để Portainer tự gán project theo tên Stack.
+# =============================================================================
+
+services:
+  backend:
+    image: ${AGENTSOCIETY_RUNTIME_IMAGE:-dungnt118/freepbx:agentsociety2-runtime}
+    init: true
+    restart: unless-stopped
+    shm_size: "2gb"
+    environment:
+      AGENTSOCIETY_LLM_API_KEY: ${AGENTSOCIETY_LLM_API_KEY:?Bat buoc cau hinh AGENTSOCIETY_LLM_API_KEY}
+      AGENTSOCIETY_LLM_API_BASE: ${AGENTSOCIETY_LLM_API_BASE:-https://api.openai.com/v1}
+      AGENTSOCIETY_LLM_MODEL: ${AGENTSOCIETY_LLM_MODEL:-gpt-6-luna}
+      AGENTSOCIETY_CODER_LLM_API_KEY: ${AGENTSOCIETY_CODER_LLM_API_KEY:-}
+      AGENTSOCIETY_CODER_LLM_API_BASE: ${AGENTSOCIETY_CODER_LLM_API_BASE:-}
+      AGENTSOCIETY_CODER_LLM_MODEL: ${AGENTSOCIETY_CODER_LLM_MODEL:-}
+      AGENTSOCIETY_LLM_THINKING: ${AGENTSOCIETY_LLM_THINKING:-off}
+      AGENTSOCIETY_CODER_LLM_THINKING: ${AGENTSOCIETY_CODER_LLM_THINKING:-off}
+      AGENTSOCIETY_LLM_API_TYPE: ${AGENTSOCIETY_LLM_API_TYPE:-openai}
+      AGENTSOCIETY_EMBEDDING_API_KEY: ${AGENTSOCIETY_EMBEDDING_API_KEY:-}
+      AGENTSOCIETY_EMBEDDING_API_BASE: ${AGENTSOCIETY_EMBEDDING_API_BASE:-https://api.openai.com/v1}
+      AGENTSOCIETY_EMBEDDING_MODEL: ${AGENTSOCIETY_EMBEDDING_MODEL:-text-embedding-3-large}
+      AGENTSOCIETY_EMBEDDING_DIMS: ${AGENTSOCIETY_EMBEDDING_DIMS:-1024}
+      AGENTSOCIETY_HOME_DIR: ${AGENTSOCIETY_HOME_DIR:-/data/agentsociety_data}
+      WORKSPACE_PATH: ${WORKSPACE_PATH:-/workspace}
+      BACKEND_HOST: ${BACKEND_HOST:-0.0.0.0}
+      BACKEND_PORT: ${BACKEND_PORT:-8001}
+      BACKEND_TRUSTED_HOSTS: ${BACKEND_TRUSTED_HOSTS:-backend,localhost,127.0.0.1}
+      BACKEND_ALLOWED_ORIGINS: ${BACKEND_ALLOWED_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173,http://localhost:8001,http://127.0.0.1:8001}
+      BACKEND_TOKEN: ${BACKEND_TOKEN:-}
+      URBAN_SIM_FERNET_KEY: ${URBAN_SIM_FERNET_KEY:-}
+      DASHBOARD_USD_TO_VND: ${DASHBOARD_USD_TO_VND:-25500}
+      MEM0_TELEMETRY: ${MEM0_TELEMETRY:-False}
+      ANONYMIZED_TELEMETRY: ${ANONYMIZED_TELEMETRY:-False}
+      URBAN_SIM_ALLOW_LOCAL_URLS: ${URBAN_SIM_ALLOW_LOCAL_URLS:-1}
+      TZ: ${TIMEZONE:-Asia/Ho_Chi_Minh}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - agentsociety_workspace:/workspace
+      - agentsociety_data:/data/agentsociety_data
+    command: >
+      sh -c 'if [ ! -d /workspace/.agentsociety ]; then
+      python -m agentsociety2.society.workspace init --target-dir /workspace --skip-map;
+      fi && exec python -m agentsociety2.backend.run'
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "curl -fsS -H \"Authorization: Bearer $$BACKEND_TOKEN\" http://127.0.0.1:8001/health || exit 1",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+
+  gateway:
+    image: ${AGENTSOCIETY_GATEWAY_IMAGE:-dungnt118/freepbx:agentsociety2-gateway}
+    restart: unless-stopped
+    environment:
+      BACKEND_TOKEN: ${BACKEND_TOKEN:-}
+      NGINX_ENVSUBST_FILTER: BACKEND_TOKEN
+      TZ: ${TIMEZONE:-Asia/Ho_Chi_Minh}
+    ports:
+      - "${AGENTSOCIETY_API_PORT:-8001}:8001"
+      - "${AGENTSOCIETY_WEB_PORT:-5173}:5173"
+    depends_on:
+      backend:
+        condition: service_healthy
+
+  mobility-dashboard:
+    image: ${AGENTSOCIETY_RUNTIME_IMAGE:-dungnt118/freepbx:agentsociety2-runtime}
+    restart: unless-stopped
+    environment:
+      AGENTSOCIETY_HOME_DIR: ${AGENTSOCIETY_HOME_DIR:-/data/agentsociety_data}
+      WORKSPACE_PATH: ${WORKSPACE_PATH:-/workspace}
+      TZ: ${TIMEZONE:-Asia/Ho_Chi_Minh}
+    volumes:
+      - agentsociety_workspace:/workspace
+      - agentsociety_data:/data/agentsociety_data
+    command: >
+      sh -c 'mkdir -p /workspace/hypothesis_1/experiment_1/run &&
+      exec python /app/examples/v2/daily_mobility/tools/serve_live_dashboard.py
+      --run-dir /workspace/hypothesis_1/experiment_1/run
+      --log-file /workspace/hypothesis_1/experiment_1/run/output.log
+      --agent-id 1
+      --host 0.0.0.0
+      --port 8765'
+    ports:
+      - "${AGENTSOCIETY_MOBILITY_PORT:-8765}:8765"
+    depends_on:
+      backend:
+        condition: service_started
+
+volumes:
+  agentsociety_workspace:
+  agentsociety_data:

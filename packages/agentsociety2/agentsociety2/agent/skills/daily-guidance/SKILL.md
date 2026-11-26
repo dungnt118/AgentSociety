@@ -1,42 +1,39 @@
 ---
 name: daily-guidance
-description: 强制使用：凡是时间尺度在小时及以下的日常行为模拟，必须使用本 Skill 生成、评估、执行和修正每日 Story。
+description: "Bắt buộc cho mô phỏng theo giờ trở xuống: sử dụng kỹ năng này để lập, đánh giá, thực thi và điều chỉnh kế hoạch sinh hoạt trong ngày (Daily Story)."
 script: scripts/daily_guidance.py
 hooks:
   pre_step: scripts/daily_guidance.py
 ---
 
-# Daily Guidance
+# Daily Guidance — Định hướng Hành vi Hàng ngày
 
-Daily Guidance 让 agent 先形成一天的完整 Story，再按 Story 指导每个仿真步的行为。
-**所有结构化操作都通过 `scripts/daily_guidance.py` 的 CLI 命令完成——你提交 JSON 内容，
-脚本负责校验、序列化 YAML、以及从仿真时钟推导执行状态。**
+Daily Guidance giúp agent hình thành trước một kịch bản sinh hoạt trọn ngày (`Story`), sau đó bám theo Story đó để hành xử ở từng bước mô phỏng.
+**Mọi thao tác có cấu trúc đều thực hiện qua lệnh CLI của `scripts/daily_guidance.py` — bạn gửi nội dung JSON, script sẽ kiểm tra hợp lệ, lưu thành YAML và tự suy diễn trạng thái thực thi theo đồng hồ mô phỏng.**
 
-每天一个文件：`state/daily_guidance/YYYY-MM-DD/story.yaml`（由脚本生成和维护）。
+Mỗi ngày tương ứng một tệp: `state/daily_guidance/YYYY-MM-DD/story.yaml` (do script tạo và duy trì).
 
-## 核心原则
+## Nguyên tắc cốt lõi
 
-1. **用 `plan --json` 提交一天的安排。** 提交 JSON 对象，脚本校验后写入 story.yaml。
-2. **执行状态由时钟推导。** `completed_segments` / `current_segment_id` 是
-   `(segments, 当前仿真时间)` 的函数，由脚本在读取时计算。时间到了自然完成。
-3. **pre_step hook 每步输出当前 segment。** 每个 step 开始，hook 会注入 `active_segment`
-   （含 `activity` 和 `location_policy`）。按此移动和回答问卷。
+1. **Dùng `plan --json` để nộp kế hoạch cả ngày.** Gửi đối tượng JSON, script xác thực rồi ghi vào `story.yaml`.
+2. **Trạng thái thực thi suy ra từ đồng hồ mô phỏng.** `completed_segments` / `current_segment_id` là hàm theo `(segments, thời gian mô phỏng hiện tại)`, được script tính mỗi lần đọc. Hết khung giờ là tự động hoàn tất chặng đó.
+3. **Hook `pre_step` tự xuất `segment` hiện tại ở mỗi bước.** Đầu mỗi step, hook sẽ bơm vào ngữ cảnh `active_segment` (gồm `activity` và `location_policy`) để bạn di chuyển và trả lời khảo sát theo đúng ngữ cảnh.
 
-## 每步流程
+## Quy trình mỗi bước (step)
 
-每个 step 开始，pre_step hook 自动输出当前状态。两种情况：
+Đầu mỗi bước mô phỏng, hook `pre_step` tự động trả về trạng thái hiện tại theo một trong hai trường hợp:
 
-**情况 A：还没有有效 Story（`ok: false`）**
+**Trường hợp A: Chưa có Story hợp lệ (`ok: false`)**
 
-hook 输出会包含 `next` 指引。立即提交一天的 Story：
+Kết quả hook sẽ có gợi ý `next`. Hãy nộp ngay Story cho cả ngày:
 
 ```bash
-python scripts/daily_guidance.py plan --date YYYY-MM-DD --json '<JSON对象>'
+python scripts/daily_guidance.py plan --date YYYY-MM-DD --json '<JSON object>'
 ```
 
-**情况 B：已有有效 Story（`ok: true`）**
+**Trường hợp B: Đã có Story hợp lệ (`ok: true`)**
 
-hook 输出包含 `active_segment` 和 `guidance`，例如：
+Hook trả về `active_segment` và `guidance`, ví dụ:
 
 ```yaml
 active_segment:
@@ -48,25 +45,25 @@ active_segment:
 guidance: Your intended activity now is 'sleep' at location policy 'home_aoi'. ...
 ```
 
-直接按 `active_segment.activity` 和 `location_policy` 行动并回答问卷。回答意图问卷时，以 `active_segment.activity` 为当前意图。
+Hãy hành động và trả lời bảng hỏi khảo sát đúng theo `active_segment.activity` và `location_policy`. Khi trả lời khảo sát ý định hiện tại, lấy `active_segment.activity` làm hoạt động chủ đạo.
 
-## CLI 命令
+## Các lệnh CLI hỗ trợ
 
-所有命令通过 `execute_skill_script` 调用，统一返回 `{ok, ...}` YAML 结果块。
+Mọi lệnh được gọi qua `execute_skill_script` và trả về khối YAML chuẩn `{ok, ...}`:
 
-| 命令 | 用途 |
+| Lệnh | Mục đích sử dụng |
 | --- | --- |
-| `plan --date D --json '<obj>'` | 提交一天的完整 Story（JSON）。校验通过才写文件，否则返回逐字段修复提示。 |
-| `current --date D` | 返回当前时刻所处的 segment 摘要。 |
-| `show --date D [--format summary\|full]` | 执行状态快照（completed/current 由时钟推导）。 |
-| `record --date D --activity A --location L [--note N]` | 记录本步实际发生的活动到 `actual_timeline`。 |
-| `deviate --date D --type T --reason R` | 记录偏差到 `change_log`。 |
-| `revise --date D --from SEG_ID --json '<list>'` | 用新的尾段替换 `SEG_ID` 及其之后的所有 segment。 |
-| `check --date D` | 校验现有 story.yaml。 |
+| `plan --date D --json '<obj>'` | Nộp Story trọn ngày (JSON). Đạt kiểm tra mới ghi file, nếu sai sẽ trả lỗi chi tiết từng trường để sửa. |
+| `current --date D` | Trả về tóm tắt `segment` đang diễn ra tại thời điểm hiện tại. |
+| `show --date D [--format summary\|full]` | Xem ảnh chụp trạng thái thực thi (`completed`/`current` tính theo đồng hồ). |
+| `record --date D --activity A --location L [--note N]` | Ghi nhận hoạt động thực tế của bước này vào `actual_timeline`. |
+| `deviate --date D --type T --reason R` | Ghi nhận sai lệch so với kế hoạch vào `change_log`. |
+| `revise --date D --from SEG_ID --json '<list>'` | Thay thế `SEG_ID` và toàn bộ các chặng phía sau bằng danh sách chặng mới. |
+| `check --date D` | Kiểm tra tính hợp lệ của tệp `story.yaml` hiện có. |
 
-## plan 的 JSON 格式
+## Định dạng JSON cho lệnh `plan`
 
-`--json` 接收一个对象，包含 `story_id`、`date`、`segments` 三个字段。`self_check` 可选。
+Tham số `--json` nhận một đối tượng JSON gồm 3 trường bắt buộc: `story_id`, `date`, `segments` (`self_check` là tùy chọn).
 
 ```json
 {
@@ -97,62 +94,62 @@ guidance: Your intended activity now is 'sleep' at location policy 'home_aoi'. .
 }
 ```
 
-## 生成规则
+## Quy tắc sinh Story
 
-- 先读 `AGENT.json`，确认当前时间、职业、家庭/工作地点、角色义务。
-- 如果 profile 表示有工作/学习义务，必须安排合理的 work/study segment，除非 `tpb_reason.can.status` 给出执行条件不足。
-- 必须覆盖：睡眠/休息、进食、主要角色义务、安全返回或夜间栖身。
-- 工作日应包含通勤、用餐、傍晚回家、休闲等真实节律，各 segment 均匀分布在全天。
-- 每个 segment 必须有 `id/start/end/activity/location_policy/maslow_reason/tpb_reason`。
-- `start`/`end` 用 `HH:MM`，按顺序**连续衔接**（前一段的 end 等于后一段的 start）；末尾可用 `24:00`。时间必须覆盖一整天 `00:00`–`24:00`。
+- Đọc `AGENT.json` trước để nắm thời gian hiện tại, nghề nghiệp, địa điểm nhà/cơ quan và nghĩa vụ vai trò.
+- Nếu hồ sơ có nghĩa vụ đi làm/đi học, phải bố trí các chặng `work`/`study` hợp lý, trừ khi `tpb_reason.can.status` chỉ ra không đủ điều kiện thực hiện.
+- Phải bao phủ đủ: ngủ/nghỉ, ăn uống, nghĩa vụ chính theo vai trò, quay về nơi ở an toàn vào buổi tối.
+- Ngày làm việc nên thể hiện nhịp sinh hoạt thật gồm di chuyển, ăn trưa/tối, về nhà, giải trí nhẹ, phân bổ đều trong ngày.
+- Mỗi chặng bắt buộc có đủ: `id/start/end/activity/location_policy/maslow_reason/tpb_reason`.
+- `start`/`end` dùng định dạng `HH:MM`, **nối tiếp liên tục không đứt quãng** (`end` chặng trước bằng `start` chặng sau); chặng cuối có thể kết thúc ở `24:00`. Tổng thời lượng phải phủ kín `00:00`–`24:00`.
 
-## location_policy 取值
+## Các giá trị `location_policy`
 
-| 值 | 含义 |
+| Giá trị | Ý nghĩa |
 | --- | --- |
-| `home_aoi` | 在家 |
-| `work_aoi` | 在工作地 |
-| `near_home_aoi` | 家附近（搜索 POI） |
-| `near_work_aoi` | 工作地附近（搜索 POI） |
-| `transit` | 通勤途中 |
-| `city` | 城市范围内自由活动 |
+| `home_aoi` | Tại nhà |
+| `work_aoi` | Tại nơi làm việc |
+| `near_home_aoi` | Gần nhà (tìm POI lân cận) |
+| `near_work_aoi` | Gần nơi làm việc (tìm POI lân cận) |
+| `transit` | Đang di chuyển / đi lại |
+| `city` | Tự do di chuyển trong khu vực đô thị |
 
-## Maslow Reason
+## Lý giải theo Tháp nhu cầu Maslow (`maslow_reason`)
 
-用马斯洛需求层次解释一天安排是否合理。`maslow_reason.need` 是字符串，可用常见值或按场景扩展。
+Dùng Tháp nhu cầu Maslow để giải thích tính hợp lý của lịch trình trong ngày (`maslow_reason.need` là chuỗi ký tự, dùng các giá trị chuẩn dưới đây hoặc mở rộng theo bối cảnh):
 
-| 值 | 含义 |
+| Giá trị | Ý nghĩa |
 | --- | --- |
-| `physiological.food` | 进食、补充能量、维持餐食节律 |
-| `physiological.rest` | 睡眠、休息、恢复体力 |
-| `safety.home_shelter` | 稳定居所、夜间栖身、返回地点 |
-| `safety.income_stability` | 通过工作、学习或职责维持稳定生活 |
-| `belonging.social_connection` | 家庭、朋友、同事、社区连接 |
-| `esteem.role_obligation` | 职业、学习、家庭或社会职责 |
-| `esteem.competence` | 完成任务、能力感、认可 |
-| `self_actualization.growth` | 学习、创造、探索 |
-| `recovery.leisure` | 娱乐、散步、轻休闲 |
+| `physiological.food` | Ăn uống, nạp năng lượng, duy trì bữa ăn |
+| `physiological.rest` | Ngủ, nghỉ ngơi, hồi phục thể lực |
+| `safety.home_shelter` | Nơi ở ổn định, chỗ nghỉ ban đêm, quay về nhà |
+| `safety.income_stability` | Duy trì cuộc sống qua công việc, học tập hoặc trách nhiệm |
+| `belonging.social_connection` | Gắn kết gia đình, bạn bè, đồng nghiệp, cộng đồng |
+| `esteem.role_obligation` | Trách nhiệm nghề nghiệp, học tập, gia đình hoặc xã hội |
+| `esteem.competence` | Hoàn thành công việc, năng lực bản thân, được ghi nhận |
+| `self_actualization.growth` | Học hỏi, sáng tạo, khám phá |
+| `recovery.leisure` | Giải trí, dạo bộ, thư giãn nhẹ |
 
-`maslow_reason.required` 使用 `required`、`soft_required` 或 `optional`。
+`maslow_reason.required` nhận một trong các giá trị: `required`, `soft_required` hoặc `optional`.
 
-## TPB Reason
+## Lý giải theo Lý thuyết Hành vi Hoạch định TPB (`tpb_reason`)
 
-计划行为理论（TPB）认为行为意图由三类因素形成：
+Lý thuyết Hành vi Hoạch định (TPB) xem ý định hành vi hình thành từ 3 yếu tố:
 
-- `want`：为什么想做或接受该行为。
-- `norm`：为什么符合角色、社会规范或他人期待。
-- `can`：为什么现在有时间、地点、交通、资源等执行条件。
+- `want`: vì sao agent muốn thực hiện hoặc chấp nhận hành động này.
+- `norm`: vì sao hành động phù hợp vai trò, chuẩn mực xã hội hoặc kỳ vọng xung quanh.
+- `can`: vì sao hiện tại có đủ thời gian, địa điểm, phương tiện, nguồn lực để làm.
 
-每个字段含 `reason`（短句）和 `status`（`supported`/`weak`/`missing`/`contradicted`）。
-`proof` 写一个短句说明依据。`choice` 用 `commit`/`revise`/`delay`/`skip`/`observe`。
-当 `can.status: contradicted` 时，`choice` 不能用 `commit`。
+Mỗi yếu tố gồm `reason` (câu ngắn) và `status` (`supported`/`weak`/`missing`/`contradicted`).
+`proof` là một câu ngắn nêu căn cứ. `choice` chọn một trong: `commit`/`revise`/`delay`/`skip`/`observe`.
+Khi `can.status: contradicted`, trường `choice` không được phép chọn `commit`.
 
-## 偏差处理
+## Xử lý sai lệch thực tế
 
-现实与计划不符时，用 CLI 命令记录：
+Khi diễn biến thực tế khác với Story dự kiến, dùng CLI để cập nhật:
 
-- `record --activity ... --location ...`：记录本步实际活动到 `actual_timeline`。
-- `deviate --type record_only --reason ...`：轻微偏离，只追加 change_log。
-- `deviate --type local_patch --reason ...`：需要调整当前或相邻 segment（随后用 `revise`）。
-- `revise --from SEG_ID --json '<新尾段>'`：重写当天剩余 segments。
-- `deviate --type carryover --reason ...`：当天无法补偿，留给第二天参考。
+- `record --activity ... --location ...`: ghi nhận hoạt động thực tế của bước hiện tại vào `actual_timeline`.
+- `deviate --type record_only --reason ...`: sai lệch nhẹ, chỉ ghi thêm vào `change_log`.
+- `deviate --type local_patch --reason ...`: cần điều chỉnh chặng hiện tại hoặc chặng kế tiếp (sau đó gọi `revise`).
+- `revise --from SEG_ID --json '<danh sách chặng mới>'`: viết lại phần đuôi Story còn lại trong ngày.
+- `deviate --type carryover --reason ...`: chưa thể bù trong ngày, lưu lại để tham khảo cho ngày hôm sau.

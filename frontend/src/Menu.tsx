@@ -1,16 +1,34 @@
-import { GithubOutlined, ExperimentOutlined, ApiOutlined, TeamOutlined, GlobalOutlined, NodeIndexOutlined, SettingOutlined, RocketOutlined, ThunderboltOutlined } from "@ant-design/icons";
-import { Menu, MenuProps, Space, Dropdown, Button } from "antd";
+import {
+    ApartmentOutlined,
+    ApiOutlined,
+    BookOutlined,
+    ExperimentOutlined,
+    FormOutlined,
+    GithubOutlined,
+    GlobalOutlined,
+    MenuOutlined,
+    MoreOutlined,
+    NodeIndexOutlined,
+    RocketOutlined,
+    SettingOutlined,
+    TeamOutlined,
+    ThunderboltOutlined,
+} from "@ant-design/icons";
+import { Button, Drawer, Dropdown, Grid, Menu, MenuProps } from "antd";
+import React, { useState } from "react";
+import { useTranslation } from 'react-i18next';
 import { Link } from "react-router";
 import Account from "./components/Account";
-import { useTranslation } from 'react-i18next';
 import { WITH_AUTH } from "./components/fetch";
-// import Account from "./components/Account";
 
 const RootMenu = ({ selectedKey, style }: {
     selectedKey: string,
     style?: React.CSSProperties
 }) => {
     const { t, i18n } = useTranslation();
+    const screens = Grid.useBreakpoint();
+    const isMobile = screens.md === false;
+    const [drawerOpen, setDrawerOpen] = useState(false);
 
     const currentLang = (i18n.resolvedLanguage || i18n.language || 'vi').split('-')[0];
     const languageLabels: Record<string, string> = {
@@ -24,7 +42,42 @@ const RootMenu = ({ selectedKey, style }: {
         { key: 'zh', label: '中文' },
     ];
 
-    const agentItems: MenuProps['items'] = [
+    const externalResourceItems: MenuProps['items'] = [
+        {
+            key: "/Documentation",
+            icon: <BookOutlined />,
+            label: (
+                <a href="https://agentsociety2.readthedocs.io/" rel="noopener noreferrer" target="_blank">
+                    {t('menu.documentation')}
+                </a>
+            ),
+        },
+        {
+            key: "/V2",
+            icon: <RocketOutlined />,
+            label: (
+                <a href="https://agentsociety2.fiblab.net" rel="noopener noreferrer" target="_blank">
+                    {t('menu.v2')}
+                </a>
+            ),
+        },
+        {
+            key: "/Github",
+            icon: <GithubOutlined />,
+            label: (
+                <a href="https://github.com/tsinghua-fib-lab/agentsociety/" rel="noopener noreferrer" target="_blank">
+                    {t('menu.github')}
+                </a>
+            ),
+        },
+    ];
+
+    const agentSubItems: MenuProps['items'] = [
+        {
+            key: '/agents',
+            label: <Link to="/agents">{t('menu.agents')}</Link>,
+            icon: <TeamOutlined />,
+        },
         {
             key: '/agent-templates',
             label: <Link to="/agent-templates">{t('menu.agentTemplates')}</Link>,
@@ -42,7 +95,12 @@ const RootMenu = ({ selectedKey, style }: {
         },
     ];
 
-    const menuItems: MenuProps['items'] = [
+    const primaryMenuItems: MenuProps['items'] = [
+        {
+            key: '/urban-sim',
+            label: <Link to="/urban-sim">Mô phỏng Khu đô thị</Link>,
+            icon: <ApartmentOutlined />,
+        },
         {
             key: '/llms',
             label: <Link to="/llms">{t('menu.llmConfigs')}</Link>,
@@ -54,15 +112,10 @@ const RootMenu = ({ selectedKey, style }: {
             icon: <GlobalOutlined />,
         },
         {
-            key: '/agents',
-            label: (
-                <Dropdown menu={{ items: agentItems }} placement="bottomLeft" arrow>
-                    <div>
-                        <Link to="/agents"><Space><TeamOutlined />{t('menu.agents')}</Space></Link>
-                    </div>
-                </Dropdown>
-            ),
-
+            key: '/agents-group',
+            label: t('menu.agents'),
+            icon: <TeamOutlined />,
+            children: agentSubItems,
         },
         {
             key: '/workflows',
@@ -74,37 +127,68 @@ const RootMenu = ({ selectedKey, style }: {
             label: <Link to="/console">{t('menu.experiments')}</Link>,
             icon: <ExperimentOutlined />,
         },
-        { key: "/survey", label: <Link to="/survey">{t('menu.survey')}</Link> },
+        {
+            key: "/survey",
+            label: <Link to="/survey">{t('menu.survey')}</Link>,
+            icon: <FormOutlined />,
+        },
         ...(WITH_AUTH ? [{ key: "/bill", label: <Link to="/bill">{t('menu.bill')}</Link> }] : []),
     ];
 
-    menuItems.push({ key: "/Documentation", label: <Link to="https://agentsociety2.readthedocs.io/" rel="noopener noreferrer" target="_blank"><Space>{t('menu.documentation')}</Space></Link> });
-    menuItems.push({ key: "/V2", label: <Link to="https://agentsociety2.fiblab.net" rel="noopener noreferrer" target="_blank"><Space><RocketOutlined />{t('menu.v2')}</Space></Link> });
-    menuItems.push({ key: "/Github", label: <Link to="https://github.com/tsinghua-fib-lab/agentsociety/" rel="noopener noreferrer" target="_blank"><Space>{t('menu.github')}<GithubOutlined /></Space></Link> });
+    const mobileDrawerItems: MenuProps['items'] = [
+        ...primaryMenuItems,
+        { type: 'divider' },
+        ...externalResourceItems,
+    ];
+
+    const activeKey = ['/agents', '/agent-templates', '/profiles', '/skills'].includes(selectedKey)
+        ? selectedKey
+        : selectedKey;
 
     const menuStyle: React.CSSProperties = {
         ...style,
-        display: 'flex',
-        width: '100%',
-        alignItems: 'center',
+        flex: 1,
+        minWidth: 0,
+        height: 56,
+        lineHeight: '56px',
+        borderBottom: 'none',
     };
 
     return (
-        <div style={{ display: 'flex', width: '100%' }}>
-            <Menu
-                theme="dark"
-                mode="horizontal"
-                items={menuItems}
-                selectedKeys={[selectedKey]}
-                style={menuStyle}
-            />
+        <div style={{ display: 'flex', width: '100%', minWidth: 0, height: 56, alignItems: 'center' }}>
+            {!isMobile && (
+                <Menu
+                    className="root-top-menu"
+                    theme="dark"
+                    mode="horizontal"
+                    items={primaryMenuItems}
+                    selectedKeys={[activeKey]}
+                    style={menuStyle}
+                />
+            )}
             <div style={{
                 marginLeft: 'auto',
                 display: 'flex',
                 alignItems: 'center',
-                minWidth: '320px',
-                justifyContent: 'flex-end'
+                gap: 4,
+                flexShrink: 0,
+                justifyContent: 'flex-end',
             }}>
+                {!isMobile && (
+                    <Dropdown
+                        menu={{ items: externalResourceItems }}
+                        placement="bottomRight"
+                        arrow
+                    >
+                        <Button
+                            type="text"
+                            size="middle"
+                            aria-label="Tài nguyên tham khảo"
+                            style={{ color: 'white' }}
+                            icon={<MoreOutlined />}
+                        />
+                    </Dropdown>
+                )}
                 <Dropdown
                     menu={{
                         items: languageItems,
@@ -114,12 +198,38 @@ const RootMenu = ({ selectedKey, style }: {
                     placement="bottomRight"
                     arrow
                 >
-                    <Button type="text" style={{ color: 'white' }} icon={<GlobalOutlined />}>
-                        {languageLabels[currentLang] || 'Tiếng Việt'}
+                    <Button type="text" size={isMobile ? 'small' : 'middle'} style={{ color: 'white' }} icon={<GlobalOutlined />}>
+                        {isMobile ? currentLang.toUpperCase() : (languageLabels[currentLang] || 'Tiếng Việt')}
                     </Button>
                 </Dropdown>
                 {WITH_AUTH && <Account />}
+                {isMobile && (
+                    <Button
+                        type="text"
+                        aria-label="Mở menu điều hướng"
+                        style={{ color: 'white' }}
+                        icon={<MenuOutlined />}
+                        onClick={() => setDrawerOpen(true)}
+                    />
+                )}
             </div>
+
+            <Drawer
+                title="Điều hướng AgentSociety"
+                placement="right"
+                size="default"
+                styles={{ wrapper: { width: 280 } }}
+                open={drawerOpen}
+                onClose={() => setDrawerOpen(false)}
+            >
+                <Menu
+                    mode="inline"
+                    selectedKeys={[activeKey]}
+                    items={mobileDrawerItems}
+                    onClick={() => setDrawerOpen(false)}
+                    style={{ borderRight: 'none' }}
+                />
+            </Drawer>
         </div>
     );
 };

@@ -59,6 +59,8 @@ venv_arm/
 .env
 .env.*
 !.env.example
+portainer.env
+local-docker.env
 .python-version
 easypaper_agentsociety.yaml
 
@@ -193,3 +195,8 @@ docs-reports/
 codeql-databases/
 codeql-results/
 .cache/codeql/
+
+# Universal Issue Resolver — Bảo vệ thông tin môi trường & session kiểm thử local
+issue-resolution/**/issue.env
+issue-resolution/base.issue.env
+issue-resolution/**/artifacts/**/*.storage.json

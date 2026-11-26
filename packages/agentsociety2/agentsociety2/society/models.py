@@ -71,6 +71,15 @@ class InitConfig(BaseModel):
         default_factory=CodeGenRouterConfig,
         description="CodeGenRouter 配置",
     )
+    router_type: Literal["codegen", "react"] = Field(
+        "codegen",
+        description="环境路由器实现：codegen（默认）或 react（适合 Web UI 交互）",
+    )
+    max_cost_usd: float | None = Field(
+        None,
+        gt=0,
+        description="可选单次运行预算上限（USD），超出后在 tick 边界自动 Pause",
+    )
 
 
 class RunStep(BaseModel):

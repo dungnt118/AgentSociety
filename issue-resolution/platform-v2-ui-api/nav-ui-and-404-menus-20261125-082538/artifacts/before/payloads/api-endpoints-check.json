@@ -1,0 +1,90 @@
+[
+  {
+    "endpoint": "/api/llm-configs",
+    "status": 404,
+    "hasDataArray": false,
+    "count": null,
+    "snippet": "{\"detail\":\"Not Found\"}",
+    "passed": false
+  },
+  {
+    "endpoint": "/api/map-configs",
+    "status": 404,
+    "hasDataArray": false,
+    "count": null,
+    "snippet": "{\"detail\":\"Not Found\"}",
+    "passed": false
+  },
+  {
+    "endpoint": "/api/agent-configs",
+    "status": 404,
+    "hasDataArray": false,
+    "count": null,
+    "snippet": "{\"detail\":\"Not Found\"}",
+    "passed": false
+  },
+  {
+    "endpoint": "/api/agent-templates",
+    "status": 404,
+    "hasDataArray": false,
+    "count": null,
+    "snippet": "{\"detail\":\"Not Found\"}",
+    "passed": false
+  },
+  {
+    "endpoint": "/api/agent-profiles",
+    "status": 404,
+    "hasDataArray": false,
+    "count": null,
+    "snippet": "{\"detail\":\"Not Found\"}",
+    "passed": false
+  },
+  {
+    "endpoint": "/api/agent-classes?agent_type=citizen",
+    "status": 404,
+    "hasDataArray": false,
+    "count": null,
+    "snippet": "{\"detail\":\"Not Found\"}",
+    "passed": false
+  },
+  {
+    "endpoint": "/api/agent-blocks",
+    "status": 404,
+    "hasDataArray": false,
+    "count": null,
+    "snippet": "{\"detail\":\"Not Found\"}",
+    "passed": false
+  },
+  {
+    "endpoint": "/api/community/workflow/functions",
+    "status": 404,
+    "hasDataArray": false,
+    "count": null,
+    "snippet": "{\"detail\":\"Not Found\"}",
+    "passed": false
+  },
+  {
+    "endpoint": "/api/workflow-configs",
+    "status": 404,
+    "hasDataArray": false,
+    "count": null,
+    "snippet": "{\"detail\":\"Not Found\"}",
+    "passed": false
+  },
+  {
+    "endpoint": "/api/experiments",
+    "status": 404,
+    "hasDataArray": false,
+    "count": null,
+    "snippet": "{\"detail\":\"Not Found\"}",
+    "passed": false
+  },
+  {
+    "endpoint": "/api/surveys",
+    "status": 404,
+    "hasDataArray": false,
+    "count": null,
+    "snippet": "{\"detail\":\"Not Found\"}",
+    "passed": false
+  }
+]

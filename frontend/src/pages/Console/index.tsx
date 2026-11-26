@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef } from "react";
 
-import { Col, Row, message, Button, Space, Popconfirm, Modal, Dropdown, Select } from 'antd';
+import { Col, Row, message, Button, Space, Popconfirm, Modal, Dropdown, Select, Grid } from 'antd';
 import { parseT } from "../../components/util";
 import { useNavigate } from "react-router";
 import { Experiment } from "../../components/type";
@@ -12,6 +12,8 @@ import { useTranslation } from "react-i18next";
 
 const Page = () => {
     const { t } = useTranslation();
+    const screens = Grid.useBreakpoint();
+    const isMobile = screens.md === false;
     const navigate = useNavigate(); // 获取导航函数
     const [detail, setDetail] = useState<Experiment | null>(null);
     const [logVisible, setLogVisible] = useState(false);
@@ -113,7 +115,13 @@ const Page = () => {
                 return <Space>
                     <Button
                         type="primary"
-                        onClick={() => navigate(`/exp/${record.id}`)}
+                        onClick={() => {
+                            if (record.urban_sim_project_id && record.urban_sim_run_id) {
+                                navigate(`/urban-sim/${record.urban_sim_project_id}/runs/${record.urban_sim_run_id}/monitor`);
+                            } else {
+                                navigate(`/exp/${record.id}`);
+                            }
+                        }}
                         disabled={record.status === 0}
                     >{t('console.buttons.goto')}</Button>
                     {record.status === 1 && (
@@ -207,12 +215,13 @@ const Page = () => {
     ];
 
     return (
-        <>
+        <div style={{ padding: 12, maxWidth: '100%', overflowX: 'hidden' }}>
             <Row>
                 <Col span={24}>
                     <ProTable<Experiment>
                         actionRef={actionRef}
                         columns={columns}
+                        scroll={{ x: 'max-content' }}
                         request={async (params) => {
                             try {
                                 const res = await fetchCustom('/api/experiments')
@@ -236,7 +245,8 @@ const Page = () => {
                         }}
                         rowKey="id"
                         columnEmptyText="-"
-                        search={{
+                        search={isMobile ? false : {
+                            defaultCollapsed: true,
                             optionRender: (_searchProps, _formProps, dom) => [
                                 ...dom,
                                 <Button
@@ -249,6 +259,17 @@ const Page = () => {
                                 </Button>
                             ]
                         }}
+                        toolBarRender={isMobile ? () => [
+                            <Button
+                                key="create-mobile"
+                                type="primary"
+                                size="small"
+                                icon={<PlusOutlined />}
+                                onClick={() => navigate('/create-experiment')}
+                            >
+                                {t('console.buttons.createExperiment')}
+                            </Button>
+                        ] : undefined}
                     />
                 </Col>
             </Row>
@@ -329,7 +350,7 @@ const Page = () => {
                     {logContent}
                 </pre>
             </Modal>
-        </>
+        </div>
     );
 }
 

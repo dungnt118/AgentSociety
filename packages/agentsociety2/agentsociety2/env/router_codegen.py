@@ -2429,7 +2429,11 @@ class CodeGenRouter(RouterBase):
         self.set_trace_context(trace_id, parent_span_id)
         # Bind per-ask trace context (ContextVar) so env-side LLM calls inside
         # CodeStage/SummaryStage emit llm.completion spans parented to this ask.
-        agent_id = ctx.get("agent_id") if isinstance(ctx, dict) else None
+        agent_id = (
+            ctx.get("agent_id", ctx.get("id", ctx.get("person_id")))
+            if isinstance(ctx, dict)
+            else None
+        )
         _trace_token = self._set_trace_context(trace_id, parent_span_id, agent_id)
         t0 = time.time_ns()
         status = "ok"

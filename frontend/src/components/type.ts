@@ -11,6 +11,8 @@ export interface Experiment {
     outputTokens: number;
     createdAt: string;
     updatedAt: string;
+    urban_sim_project_id?: string | null;
+    urban_sim_run_id?: string | null;
 }
 
 export interface Survey {

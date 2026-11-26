@@ -6,11 +6,27 @@
 import { LLMProviderType, WorkflowType, MetricType, DistributionType } from '../utils/enums';
 
 // LLM Configuration
+export type LLMThinkingMode = 'off' | 'on' | 'inherit';
+export type LLMReasoningEffort = 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
+
+export interface LLMModelPricing {
+  input_usd_per_1m: number;
+  cached_input_usd_per_1m: number;
+  output_usd_per_1m: number;
+}
+
 export interface LLMConfig {
-  provider: LLMProviderType;
+  provider: LLMProviderType | string;
   base_url?: string;
+  resolved_base_url?: string;
   api_key: string;
+  has_api_key?: boolean;
   model: string;
+  coder_model?: string;
+  thinking?: LLMThinkingMode;
+  reasoning_effort?: LLMReasoningEffort;
+  api_type?: 'openai' | 'anthropic';
+  pricing?: LLMModelPricing;
 }
 
 // Map Configuration

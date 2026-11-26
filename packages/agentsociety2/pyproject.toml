@@ -85,6 +85,8 @@ dependencies = [
     "psutil>=5.9",
     "ray>=2.0.0; sys_platform != 'win32'",
     "duckdb>=1.4.0",
+    "cryptography>=42.0.0",
+    "playwright>=1.48.0",
 ]
 
 [project.scripts]

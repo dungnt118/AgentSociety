@@ -1,31 +1,31 @@
 ---
 name: economic-reasoning
-description: Economic decision-making for agents in EconomySpace. Activate when the agent observes currency, prices, income, tax, or trading opportunities to make informed financial decisions.
+description: "Tư duy ra quyết định kinh tế trong EconomySpace: kích hoạt khi agent quan sát thấy tiền tệ, giá cả, thu nhập, thuế hoặc cơ hội giao dịch tài chính."
 script: scripts/economic_reasoning.py
 requires:
   - observation
 ---
 
-# Economic Reasoning
+# Suy luận Kinh tế (Economic Reasoning)
 
-Provides economic reasoning capabilities when the agent operates in an EconomySpace environment.
+Cung cấp năng lực phân tích và ra quyết định kinh tế cho agent khi vận hành trong môi trường `EconomySpace`.
 
-## What It Does
+## Chức năng chính
 
-1. Analyzes the agent's financial state (currency, income, consumption)
-2. Evaluates trading and employment opportunities based on cost-benefit analysis
-3. Records economic decisions and reasoning as cognition memory
+1. Phân tích trạng thái tài chính cá nhân của agent (tiền mặt/tiền tệ, thu nhập, mức tiêu dùng).
+2. Đánh giá cơ hội mua bán hàng hóa và tìm việc làm dựa trên phân tích chi phí – lợi ích.
+3. Lưu lại quyết định kinh tế cùng lập luận vào bộ nhớ nhận thức (cognition memory).
 
-## When To Activate
+## Khi nào cần kích hoạt
 
-- Observation contains financial information (currency, prices, income)
-- Agent needs to make economic decisions (buy, sell, work, invest)
-- Tax or policy changes affect the agent's financial situation
+- Dữ liệu quan sát có chứa thông tin tài chính (tiền tệ, giá bán, thu nhập).
+- Agent cần ra quyết định kinh tế (mua, bán, đi làm, đầu tư).
+- Các thay đổi về thuế hoặc chính sách tác động đến tình hình tài chính của agent.
 
-## Data Available via Environment
+## Dữ liệu và công cụ từ môi trường EconomySpace
 
-The EconomySpace environment provides these tools:
-- `get_person(agent_id)` — current financial state
-- `get_all_products()` — available products and prices
-- `buy_product(agent_id, product_name, quantity)` — purchase
-- `find_job(agent_id)` — find employment
+Môi trường `EconomySpace` cung cấp các công cụ sau qua `ask_env`:
+- `get_person(agent_id)` — xem trạng thái tài chính hiện tại
+- `get_all_products()` — xem danh sách hàng hóa và giá niêm yết
+- `buy_product(agent_id, product_name, quantity)` — thực hiện mua hàng
+- `find_job(agent_id)` — tìm kiếm cơ hội việc làm

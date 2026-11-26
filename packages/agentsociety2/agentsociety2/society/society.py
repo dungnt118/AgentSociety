@@ -68,9 +68,29 @@ logger = get_logger()
 # 避免每步重序列化大列表）；SOCIETY_STEP.json 每步写少量标量。两文件均原子写入。
 SOCIETY_JSON = "SOCIETY.json"
 SOCIETY_STEP_JSON = "SOCIETY_STEP.json"
-# LLM token 用量汇总（含 prompt 缓存命中）。收尾写一次；resume 时被忽略。
+# LLM token 用量汇总（含 prompt 缓存命中）。每步结束及收尾原子写入；resume 时累加。
 LLM_STATS_JSON = "LLM_STATS.json"
+STOP_REQUESTED_FILE = "STOP_REQUESTED"
 SOCIETY_SCHEMA_VERSION = 2
+
+from agentsociety2.config.llm_catalog import (
+    MODEL_RATES_USD_PER_TOKEN,
+    resolve_model_rates_usd,
+)
+
+_FALLBACK_MODEL_RATES_USD: dict[str, tuple[float, float, float]] = MODEL_RATES_USD_PER_TOKEN
+
+
+def _estimate_cost_usd_from_models(models: dict[str, dict[str, Any]]) -> float:
+    total = 0.0
+    for model_name, s in (models or {}).items():
+        rates = resolve_model_rates_usd(model_name)
+        in_tok = int(s.get("input", 0) or 0)
+        cached_tok = min(int(s.get("cached_input", 0) or 0), in_tok)
+        out_tok = int(s.get("output", 0) or 0)
+        uncached_tok = max(0, in_tok - cached_tok)
+        total += uncached_tok * rates[0] + cached_tok * rates[1] + out_tok * rates[2]
+    return float(total)
 
 
 def _json_safe_profile(profile: Any) -> dict[str, Any]:
@@ -143,6 +163,8 @@ class AgentSociety:
         enable_replay: bool = True,
         env_module_types: list[str] | None = None,
         env_kwargs: dict[str, dict] | None = None,
+        router_type: str = "codegen",
+        max_cost_usd: float | None = None,
     ):
         """创建 record-based 仿真编排器。
 
@@ -229,6 +251,13 @@ class AgentSociety:
         # Aggregate LLM token usage across all Ray Task batches (instance-level,
         # not module-global). Each batch returns a per-task delta.
         self._token_stats: dict[str, dict[str, int]] = {}
+        self._baseline_agent_token_stats: dict[str, dict[str, int]] = {}
+        self._baseline_router_token_stats: dict[str, dict[str, int]] = {}
+        self._router_type: str = str(router_type or "codegen")
+        self._max_cost_usd: float | None = (
+            float(max_cost_usd) if max_cost_usd is not None else None
+        )
+        self._pause_reason: str | None = None
 
         # Helper is built lazily on first ask/intervene (it reconstructs agents on demand).
         self._helper: AgentSocietyHelper | None = None
@@ -258,20 +287,14 @@ class AgentSociety:
 
     @property
     def token_stats(self) -> dict[str, dict[str, int]]:
-        """按模型聚合的 LLM token 用量（agent 侧，快照）。
+        """按模型聚合的 LLM token 用量（agent 侧，含 resume 基线快照）。"""
+        from agentsociety2.config.llm_dispatcher import merge_token_stats
 
-        每项含 ``calls`` / ``input`` / ``output`` / ``cached_input`` 。
-        ``cached_input`` 是 ``input`` 中命中 provider prompt 前缀缓存的部分。仅统计 agent 侧调用；env router（coder 角色）的用量见
-        :meth:`router_token_stats` 。
-        """
+        if self._baseline_agent_token_stats:
+            return merge_token_stats(self._baseline_agent_token_stats, self._token_stats)
         return {model: dict(s) for model, s in self._token_stats.items()}
 
-    @property
-    def router_token_stats(self) -> dict[str, dict[str, int]]:
-        """env router（coder/summary 角色）的 token 用量快照。
-
-        :meth:`RouterBase.get_token_usages` 返回的是**快照而非增量**，所以这里取一次合并即可，不要按步累加，否则会重复计数。
-        """
+    def _fetch_raw_router_token_stats(self) -> dict[str, dict[str, int]]:
         env_router = getattr(self, "_env_router", None)
         getter = getattr(env_router, "get_token_usages", None)
         if getter is None:
@@ -287,6 +310,27 @@ class AgentSociety:
             for model, u in (usages or {}).items()
         }
         return {model: s for model, s in stats.items() if s["calls"] or s["input"]}
+
+    @property
+    def router_token_stats(self) -> dict[str, dict[str, int]]:
+        """env router（coder/summary 角色）的 token 用量快照（含 resume 基线）。"""
+        from agentsociety2.config.llm_dispatcher import merge_token_stats
+
+        current = self._fetch_raw_router_token_stats()
+        if self._baseline_router_token_stats:
+            return merge_token_stats(self._baseline_router_token_stats, current)
+        return current
+
+    def _check_pause_flag(self) -> bool:
+        """检查 Run 目录 Pause 信号文件或终止标志。"""
+        if self._should_terminate:
+            return True
+        if self._run_dir is not None and (self._run_dir / STOP_REQUESTED_FILE).exists():
+            self._should_terminate = True
+            if not self._pause_reason:
+                self._pause_reason = "user_requested"
+            return True
+        return False
 
     def all_token_stats(self) -> dict[str, dict[str, int]]:
         """agent 侧 + env router 侧的 token 用量合并快照。"""
@@ -693,6 +737,8 @@ class AgentSociety:
             "env_kwargs": dict(self._env_kwargs),
             "batch_size": self._batch_size,
             "steps_hash": self._steps_hash,
+            "router_type": self._router_type,
+            "max_cost_usd": self._max_cost_usd,
         }
         atomic_write_text(
             self._run_dir / SOCIETY_JSON,
@@ -750,6 +796,30 @@ class AgentSociety:
         self._t, self._step_count = current_time, step_count
         self._pending_update = None
 
+        if self._run_dir is not None:
+            stats_payload = None
+            try:
+                router_snap = await asyncio.to_thread(self._fetch_raw_router_token_stats)
+                stats_payload = self.write_llm_stats_json(
+                    router_stats_override=router_snap
+                )
+            except Exception:
+                logger.debug("Per-tick LLM_STATS flush failed", exc_info=True)
+            if (
+                self._max_cost_usd is not None
+                and stats_payload is not None
+                and not self._should_terminate
+            ):
+                est_usd = _estimate_cost_usd_from_models(
+                    stats_payload.get("models") or {}
+                )
+                if est_usd >= self._max_cost_usd:
+                    self._should_terminate = True
+                    self._pause_reason = (
+                        f"budget_limit_reached (${est_usd:.4f} >= ${self._max_cost_usd:.2f})"
+                    )
+            self._check_pause_flag()
+
     def begin_intervention(self, step_idx: int) -> None:
         """Begin a CLI intervention before its first side effect."""
         if step_idx != self._completed_step_count:
@@ -767,12 +837,14 @@ class AgentSociety:
         self._completed_step_count = completed_step_count
         self._pending_update = None
 
-    def write_llm_stats_json(self) -> dict[str, Any] | None:
+    def write_llm_stats_json(
+        self,
+        *,
+        router_stats_override: dict[str, dict[str, int]] | None = None,
+    ) -> dict[str, Any] | None:
         """把 LLM token 用量与缓存命中率写到 ``run_dir/LLM_STATS.json`` 。
 
-        含 agent 侧与 env router（coder）侧的合并快照、逐模型明细、以及聚合命中率。原始计数器一并保留——不同网关对 ``input`` 是否含 cache read 的口径不同，保留原值便于自行换算。
-
-        :returns: 写入的 payload；无 ``run_dir`` 时返回 ``None`` 。
+        含 agent 侧与 env router（coder）侧的合并快照、逐模型明细、以及聚合命中率。支持 resume 累加及 per-tick 刷新。
         """
         if self._run_dir is None:
             return None
@@ -782,13 +854,20 @@ class AgentSociety:
             merge_token_stats,
         )
 
-        # Snapshot each side once: ``router_token_stats`` hits the env router.
         agent_stats = self.token_stats
         try:
-            router_stats = self.router_token_stats
+            if router_stats_override is not None:
+                raw_router = router_stats_override
+                router_stats = (
+                    merge_token_stats(self._baseline_router_token_stats, raw_router)
+                    if self._baseline_router_token_stats
+                    else raw_router
+                )
+            else:
+                router_stats = self.router_token_stats
         except Exception:
             logger.warning("Environment token usage is unavailable", exc_info=True)
-            router_available, router_stats = False, {}
+            router_available, router_stats = False, dict(self._baseline_router_token_stats)
         else:
             router_available = True
         combined = merge_token_stats(agent_stats, router_stats)
@@ -803,9 +882,12 @@ class AgentSociety:
                 ),
             }
 
+        has_baseline = bool(
+            self._baseline_agent_token_stats or self._baseline_router_token_stats
+        )
         payload = {
             "schema_version": 1,
-            "scope": "current_process",
+            "scope": "cumulative" if has_baseline else "current_process",
             "step_count": self._step_count,
             "current_time": self._t.isoformat(),
             "models": combined,
@@ -931,7 +1013,40 @@ class AgentSociety:
             enable_replay=True,
             env_module_types=list(meta.get("env_module_types", [])),
             env_kwargs=dict(meta.get("env_kwargs", {})),
+            router_type=str(meta.get("router_type") or "codegen"),
+            max_cost_usd=meta.get("max_cost_usd"),
         )
+        llm_stats_path = run_dir / LLM_STATS_JSON
+        if llm_stats_path.is_file():
+            try:
+                prev_stats = json.loads(llm_stats_path.read_text(encoding="utf-8"))
+                if isinstance(prev_stats, dict):
+                    a_models = ((prev_stats.get("agent_side") or {}).get("models")) or {}
+                    r_models = ((prev_stats.get("router_side") or {}).get("models")) or {}
+                    if isinstance(a_models, dict):
+                        society._baseline_agent_token_stats = {
+                            str(k): {
+                                "calls": int(v.get("calls", 0) or 0),
+                                "input": int(v.get("input", 0) or 0),
+                                "output": int(v.get("output", 0) or 0),
+                                "cached_input": int(v.get("cached_input", 0) or 0),
+                            }
+                            for k, v in a_models.items()
+                            if isinstance(v, dict)
+                        }
+                    if isinstance(r_models, dict):
+                        society._baseline_router_token_stats = {
+                            str(k): {
+                                "calls": int(v.get("calls", 0) or 0),
+                                "input": int(v.get("input", 0) or 0),
+                                "output": int(v.get("output", 0) or 0),
+                                "cached_input": int(v.get("cached_input", 0) or 0),
+                            }
+                            for k, v in r_models.items()
+                            if isinstance(v, dict)
+                        }
+            except (OSError, ValueError, TypeError):
+                logger.warning("Failed to load prior LLM_STATS.json for resume", exc_info=True)
         society._steps_hash = meta.get("steps_hash")
         society._step_count = step_meta["step_count"]
         society._completed_step_count = step_meta["completed_step_count"]
@@ -1052,9 +1167,11 @@ class AgentSociety:
         :param tick: 每步时间跨度（秒）。
         """
         for _ in range(num_steps):
-            if self._should_terminate:
+            if self._check_pause_flag():
                 break
             await self.step(tick)
+            if self._check_pause_flag():
+                break
 
     @staticmethod
     async def _await_ref(ref: Any) -> Any:

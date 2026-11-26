@@ -1,58 +1,58 @@
 ---
 name: social-media
-description: 社交媒体互动：发帖 / 转发 / 评论 / 点赞 / 关注、刷新 Feed 推荐流、搜索话题贴文。必须通过 ask_env 调用 SocialMediaSpace 工具。
+description: "Tương tác mạng xã hội: đăng bài, chia sẻ lại, bình luận, thích, theo dõi, làm mới bảng tin Feed và tìm kiếm bài viết theo chủ đề qua ask_env (SocialMediaSpace)."
 ---
 
-# Social Media
+# Social Media — Tương tác Mạng xã hội
 
-SocialMediaSpace 是微博 / Twitter 风格的社交媒体环境。**所有操作通过 `ask_env` 调用**，环境路由器会自动将指令转换为 SocialMediaSpace 工具调用。
+`SocialMediaSpace` là môi trường mô phỏng mạng xã hội kiểu bảng tin/diễn đàn (tương tự Weibo / Twitter / Facebook). **Mọi thao tác gọi qua `ask_env`**, bộ định tuyến môi trường sẽ chuyển đổi thành lời gọi công cụ SocialMediaSpace tương ứng.
 
-## 环境概念
+## Khái niệm môi trường
 
-### 用户身份
+### Danh tính người dùng
 
-默认 agent_id === user_id：你在社交媒体中的 id 就是你的 agent id。`ctx={"id": <your_id>}` 提供你的身份；凡 `author_id` / `user_id` / `follower_id` 都填自己的 id，只有对他人发起动作（关注）时才用对方 id。
+Mặc định `agent_id === user_id`: mã người dùng trên mạng xã hội trùng với ID agent của bạn. Tham số `ctx={"id": <your_id>}` cung cấp danh tính; các trường `author_id` / `user_id` / `follower_id` điền ID của chính bạn, chỉ trường đối tượng nhận hành động như `followee_id` mới điền ID người khác.
 
-### 帖子
+### Bài viết (Post)
 
-每条帖子有 `post_id`、`author_id`、`content`、`tags`（话题标签列表）、`post_type`（`original` / `repost` / `comment`），以及 `likes_count` / `comments_count` / `reposts_count` / `view_count`。
+Mỗi bài viết có `post_id`, `author_id`, `content`, `tags` (danh sách thẻ chủ đề), `post_type` (`original` / `repost` / `comment`), cùng các bộ đếm `likes_count`, `comments_count`, `reposts_count`, `view_count`.
 
-### Feed 推荐流
+### Bảng tin Feed
 
-`refresh_feed` 返回按算法排序的贴文流：`chronological`（时间倒序，默认）、`reddit_hot`（热度）、`twitter_ranking`（综合社交关系）、`random`、`mf`（预训练模型）。这是贴文流推荐（Timeline），不是电商物品推荐。
+`refresh_feed` trả về danh sách bài viết sắp xếp theo thuật toán: `chronological` (mới nhất trước, mặc định), `reddit_hot` (độ nóng), `twitter_ranking` (tổng hợp quan hệ & tương tác), `random`, hoặc `mf` (mô hình gợi ý). Đây là luồng bài đăng (Timeline), không phải gợi ý sản phẩm thương mại.
 
-## 可用工具
+## Công cụ khả dụng
 
-所有操作通过 `ask_env` 调用，用模板指令 + `variables` 让同类调用结构一致（易变值放 `variables`，指令措辞保持稳定）：
+Mọi thao tác gọi qua `ask_env`, sử dụng mẫu câu lệnh + `variables` để giữ cấu trúc nhất quán (biến động đặt vào `variables`):
 
 ```
-ask_env(instruction="<指令模板>", variables={...}, ctx={"id": <your_id>}, readonly=<bool>)
+ask_env(instruction="<mẫu câu lệnh>", variables={...}, ctx={"id": <your_id>}, readonly=<bool>)
 ```
 
-### observe_user（只读，observe）
+### observe_user (chỉ đọc, quan sát)
 
-观察自己的状态：资料（粉丝 / 关注 / 发帖数）、最近 Feed（5 条）、收到的互动、近期活动、社交关系变动、可用行为列表。每个 step 先观察。
+Quan sát hồ sơ và hoạt động gần nhất: số người theo dõi / đang theo dõi / số bài đăng, 5 bài gần nhất trên Feed, tương tác nhận được, lịch sử hoạt động, biến động kết nối và danh sách hành động khả dụng. Nên gọi đầu mỗi bước.
 
 ```
 ask_env(instruction="<observe>", ctx={"id": <your_id>})
 ```
 
-### create_post（非只读）
+### create_post (ghi dữ liệu)
 
-发布原创帖子。`tags` 为话题标签列表。
+Đăng bài viết gốc mới. `tags` là danh sách từ khóa chủ đề.
 
 ```
 ask_env(
     instruction="create_post author_id={user_id} content={content} tags={tags}",
-    variables={"user_id": 0, "content": "支持更严格的背景审查", "tags": ["guncontrol", "policy"]},
+    variables={"user_id": 0, "content": "Support stricter background checks", "tags": ["guncontrol", "policy"]},
     ctx={"id": 0},
     readonly=False
 )
 ```
 
-### repost（非只读）
+### repost (ghi dữ liệu)
 
-转发帖子，可附 `comment`（留空则内容为 `repost <post_id>`）。
+Chia sẻ lại một bài viết, có thể đính kèm `comment` (để trống sẽ mặc định nội dung `repost <post_id>`).
 
 ```
 ask_env(
@@ -63,22 +63,22 @@ ask_env(
 )
 ```
 
-### comment_on_post（非只读）
+### comment_on_post (ghi dữ liệu)
 
-评论帖子。
+Bình luận vào một bài viết.
 
 ```
 ask_env(
     instruction="comment_on_post user_id={user_id} post_id={post_id} content={content}",
-    variables={"user_id": 0, "post_id": 3, "content": "同意这个观点"},
+    variables={"user_id": 0, "post_id": 3, "content": "Agree with this perspective"},
     ctx={"id": 0},
     readonly=False
 )
 ```
 
-### like_post / unlike_post（非只读）
+### like_post / unlike_post (ghi dữ liệu)
 
-点赞 / 取消点赞。参数：`user_id`、`post_id`。取消点赞把模板里的 `like_post` 换成 `unlike_post` 即可。
+Thích / bỏ thích bài viết. Tham số: `user_id`, `post_id`. Khi muốn bỏ thích chỉ cần đổi `like_post` thành `unlike_post`.
 
 ```
 ask_env(
@@ -89,9 +89,9 @@ ask_env(
 )
 ```
 
-### follow_user / unfollow_user（非只读）
+### follow_user / unfollow_user (ghi dữ liệu)
 
-关注 / 取消关注。`follower_id` 是自己，`followee_id` 是对方。
+Theo dõi / hủy theo dõi người khác. `follower_id` là ID của bạn, `followee_id` là ID đối phương.
 
 ```
 ask_env(
@@ -102,9 +102,9 @@ ask_env(
 )
 ```
 
-### view_post（非只读）
+### view_post (ghi dữ liệu)
 
-查看帖子详情（增加浏览数），用于了解内容与立场后再互动。
+Xem chi tiết bài viết (tăng lượt xem `view_count`) để hiểu nội dung và quan điểm trước khi bình luận/thích.
 
 ```
 ask_env(
@@ -115,9 +115,9 @@ ask_env(
 )
 ```
 
-### refresh_feed（只读）
+### refresh_feed (chỉ đọc)
 
-刷新 Feed 推荐流，浏览内容、寻找互动对象。
+Làm mới bảng tin đề xuất để đọc nội dung và tìm bài viết cần tương tác.
 
 ```
 ask_env(
@@ -128,9 +128,9 @@ ask_env(
 )
 ```
 
-### search_posts（只读）
+### search_posts (chỉ đọc)
 
-搜索贴文。`keyword` 在 content 和 tags 中匹配；`sort_by` 为 `time`（默认）/ `relevance` / `popularity`。
+Tìm kiếm bài viết. `keyword` khớp theo nội dung `content` và `tags`; `sort_by` nhận `time` (mặc định), `relevance`, hoặc `popularity`.
 
 ```
 ask_env(
@@ -141,9 +141,9 @@ ask_env(
 )
 ```
 
-## 示例
+## Ví dụ quy trình
 
-### 观察并刷新 Feed
+### Quan sát và làm mới bảng tin
 
 ```
 ask_env(instruction="<observe>", ctx={"id": 0})
@@ -155,12 +155,12 @@ ask_env(
 )
 ```
 
-### 发帖后点赞热门帖
+### Đăng bài mới rồi thích bài viết nổi bật
 
 ```
 ask_env(
     instruction="create_post author_id={user_id} content={content} tags={tags}",
-    variables={"user_id": 0, "content": "支持更严格的背景审查", "tags": ["guncontrol"]},
+    variables={"user_id": 0, "content": "Support stricter background checks", "tags": ["guncontrol"]},
     ctx={"id": 0},
     readonly=False
 )
@@ -178,8 +178,8 @@ ask_env(
 )
 ```
 
-## 约束
+## Ràng buộc bắt buộc
 
-1. **所有操作通过 `ask_env`**。不能直接调用 `create_post`、`refresh_feed` 等函数。
-2. **`user_id` 填你自己的 id**（`ctx["id"]`）；只有关注 / 取消关注才需要对方 id（`followee_id`）。
-3. 重复点赞、重复关注、关注自己会报错；不确定时先 `view_post` 查看状态。
+1. **Mọi thao tác đi qua `ask_env`**. Không được gọi trực tiếp hàm `create_post`, `refresh_feed`.
+2. **Luôn truyền đúng ID của mình vào `user_id`** (`ctx["id"]`); chỉ dùng ID người khác cho `followee_id`.
+3. Thích trùng bài, theo dõi trùng hoặc tự theo dõi chính mình sẽ báo lỗi; nếu chưa chắc trạng thái hãy `view_post` kiểm tra trước.

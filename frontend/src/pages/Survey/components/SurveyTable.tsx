@@ -222,7 +222,7 @@ const SurveyTableInner = () => {
                         {t('survey.createSurvey')}
                     </Button>
                 </Flex>
-                <Table dataSource={surveys} columns={tableColumns} rowKey="id" />
+                <Table dataSource={surveys} columns={tableColumns} rowKey="id" scroll={{ x: 'max-content' }} />
                 <Modal
                     open={open}
                     width='80vw'

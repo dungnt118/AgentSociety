@@ -1,6 +1,7 @@
 services:
   backend:
     image: agentsociety2-runtime:local
+    init: true
     build:
       context: .
       dockerfile: docker/Dockerfile.runtime

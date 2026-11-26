@@ -1,0 +1,158 @@
+{
+  "schemaVersion": "1.0.0",
+  "projectName": "AgentSociety",
+  "businessDomain": "platform-v2-ui-api",
+  "moduleSlug": "platform-v2-ui-api",
+  "issueId": "nav-ui-and-404-menus",
+  "issueTitle": "Sửa dứt điểm lỗi UI NAV (56px) & Hợp nhất Backend v2 SQLite cho toàn bộ menu (Bản đồ, LLM, Cư dân, Quy trình, Thí nghiệm, Khảo sát)",
+  "sessionFolderName": "nav-ui-and-404-menus-20261125-082538",
+  "createdAt": "2026-11-25T01:25:38.685Z",
+  "resolvedAt": "2026-11-25T01:45:42Z",
+  "verdict": "VERIFIED_DOD_LEVEL_1",
+  "dockerEnvironment": {
+    "composeFile": "docker-compose.local.yml",
+    "containers": [
+      "agentsociety-backend-1 (agentsociety2-runtime:local, Up healthy)",
+      "agentsociety-gateway-1 (agentsociety-gateway, 127.0.0.1:5173->5173, 127.0.0.1:8001->8001)",
+      "agentsociety-mobility-dashboard-1 (0.0.0.0:8765->8765)"
+    ],
+    "appBaseUrl": "http://127.0.0.1:5173",
+    "apiBaseUrl": "http://127.0.0.1:5173/api"
+  },
+  "reproScript": {
+    "relativePath": "repro-scenario.mjs",
+    "executionCommand": "node repro-scenario.mjs",
+    "sha256AtStep1": "27ab19141a4733856e1783480c676c06dc67f32afdf1e28eeb7d25d73c0508d4",
+    "lockedAt": "2026-11-25T01:26:50.012Z"
+  },
+  "rootCause": {
+    "expectedBehavior": "Toàn bộ 7 menu trên thanh NAV (Mô phỏng Khu đô thị, LLM, Bản đồ, Cư dân, Quy trình, Thí nghiệm, Khảo sát) phải hiển thị phẳng đồng đều trên 1 thanh header 56px không khứa trắng hay đè Card; đồng thời mọi trang đều kết nối CRUD thật với Backend v2 (SQLite + mã hóa Fernet), không phát sinh HTTP 404 hay Toast lỗi đỏ.",
+    "actualBuggyBehavior": "1) Thanh NAV có 2 vết khứa trắng 2 bên, khối menu xanh ở giữa nhô cao 68px đè xuống Card bên dưới, chữ i18n trên Toast LLM còn hiện thô `{error}`.\n2) Tất cả 11 endpoint v1 (/api/map-configs, /api/llm-configs, /api/agent-configs, /api/agent-templates, /api/agent-profiles, /api/agent-classes, /api/agent-blocks, /api/community/workflow/functions, /api/workflow-configs, /api/experiments, /api/surveys) đều trả HTTP 404 {\"detail\":\"Not Found\"} kèm Toast lỗi đỏ vì Frontend gọi endpoint v1 trong khi Docker chạy Backend v2 (agentsociety2).",
+    "technicalExplanation": "1) Xung đột CSS giữa inline `height: 56px` tại frontend/src/Layout.tsx và rule cũ `.ant-layout-header { height: 68px; }` + `.ant-menu { width: 50vw; height: 68px; }` tại frontend/src/index.css khiến thanh Menu 68px bị căn giữa nhô ra ngoài Header 56px.\n2) Backend v2 tại packages/agentsociety2/agentsociety2/backend/app.py chỉ mount 7 router tiền tố /api/v1/* (bao gồm urban_sim và agent_skills), không cung cấp API cho 6 nhóm cấu hình chung trên Web UI. Ngoài ra frontend/src/i18n/locales/vi/llm.ts dùng nhầm cú pháp `{error}` thay vì `{{error}}`.",
+    "sourceLocations": [
+      "frontend/src/index.css:47-72",
+      "frontend/src/Layout.tsx:21-33",
+      "frontend/src/Menu.tsx:60-147",
+      "frontend/src/i18n/locales/vi/llm.ts:23-26",
+      "packages/agentsociety2/agentsociety2/backend/app.py:232-240"
+    ],
+    "fixSummary": "Áp dụng Hướng 1 (Hợp nhất & làm giàu nền tảng v2): (1) Xây dựng 8 bảng SQLModel trong SQLite + mã hóa Fernet tại platform_resources.py & router platform_compat.py phục vụ đầy đủ 11+ nhóm API CRUD thật, liên thông trực tiếp với dự án UrbanSim MulberryLane (llm_config_id -> subprocess env, bản đồ Zone Topology, danh sách hồ sơ 21 Persona, và tổng hợp Run trên /console); (2) Đồng bộ --header-height: 56px toàn cục trong index.css, chỉnh App.tsx/Layout.tsx/Menu.tsx gom link tham khảo gọn bên phải và dùng SubMenu chuẩn; (3) Sửa scroll={{ x: 'max-content' }} cho toàn bộ bảng dữ liệu & ProTable toolbar trên Mobile 390px.",
+    "modifiedFiles": [
+      { "path": "packages/agentsociety2/agentsociety2/backend/services/platform_resources.py", "change": "Tạo 8 bảng SQLModel hợp nhất, mã hóa Fernet API key LLM, helper resolve_llm_env_override và seed idempotent liên thông MulberryLane." },
+      { "path": "packages/agentsociety2/agentsociety2/backend/routers/platform_compat.py", "change": "Cung cấp bộ REST API CRUD, upload (.pb & ảnh 2D PNG/JPEG/WEBP chặn SVG), export zip, temp-link và run-experiments trên /api/*." },
+      { "path": "packages/agentsociety2/agentsociety2/backend/services/urban_sim/db.py", "change": "Thêm cột llm_config_id vào UrbanSimProject kèm migration PRAGMA table_info an toàn." },
+      { "path": "packages/agentsociety2/agentsociety2/backend/routers/urban_sim.py", "change": "Hỗ trợ chọn và cập nhật llm_config_id cho từng dự án UrbanSim." },
+      { "path": "packages/agentsociety2/agentsociety2/backend/services/urban_sim/lifecycle.py", "change": "Giải mã LLM config của dự án và truyền env override an toàn khi start/resume mô phỏng." },
+      { "path": "packages/agentsociety2/agentsociety2/backend/app.py", "change": "Mount platform_compat.router và gọi ensure_platform_seed() khi khởi động." },
+      { "path": "packages/agentsociety2/agentsociety2/backend/routers/__init__.py", "change": "Export module router platform_compat." },
+      { "path": "packages/agentsociety2/tests/integration/test_platform_unified_api.py", "change": "Bổ sung 2 ca integration test kiểm chứng đủ 11 endpoint, mã hóa Fernet, upload chống SVG, survey và experiments." },
+      { "path": "frontend/src/index.css", "change": "Đồng bộ --header-height: 56px, xóa .ant-menu { width: 50vw; height: 68px; }, căn phẳng .root-top-menu." },
+      { "path": "frontend/src/Layout.tsx", "change": "Ép height 56px đồng nhất, overflow hidden và Divider sáng màu trên nền xanh #000088." },
+      { "path": "frontend/src/App.tsx", "change": "Đổi Layout headerBg sang #000088." },
+      { "path": "frontend/src/Menu.tsx", "change": "Sử dụng SubMenu chuẩn cho Cư dân và gom 3 link ngoài vào icon Dropdown bên phải để 7 menu hiển thị thoáng 1 hàng." },
+      { "path": "frontend/src/i18n/locales/vi/llm.ts", "change": "Sửa {error} thành {{error}}." },
+      { "path": "frontend/src/pages/Home/index.tsx", "change": "Điều hướng nút CTA chính sang /urban-sim." },
+      { "path": "frontend/src/pages/LLM/index.tsx", "change": "Hỗ trợ chọn/nhập model mới (gpt-5.5, gpt-5.4-mini...) và giữ mask API key khi cập nhật." },
+      { "path": "frontend/src/pages/Map/index.tsx", "change": "Chấp nhận upload cả .pb lẫn ảnh 2D, hiển thị tag loại bản đồ & nút mở UrbanSim." },
+      { "path": "frontend/src/pages/Console/index.tsx", "change": "Mở thẳng Live Monitor khi là UrbanSim Run và tối ưu bảng + toolbar cho Mobile 390px." },
+      { "path": "frontend/src/pages/UrbanSim/index.tsx", "change": "Bổ sung Select chọn cấu hình LLM liên thông từ menu LLM." },
+      { "path": "frontend/src/services/urbanSimApi.ts", "change": "Thêm listLlmConfigs và trường llm_config_id." },
+      { "path": "frontend/src/components/type.ts", "change": "Bổ sung urban_sim_project_id & urban_sim_run_id vào Experiment." },
+      { "path": "frontend/src/pages/AgentTemplate/agentTemplateStore.ts", "change": "Dùng fetchCustom thay fetch thuần cho /api/agent-param." },
+      { "path": "frontend/src/pages/Agent/index.tsx", "change": "Thêm scroll={{ x: 'max-content' }} tránh đè chữ trên Mobile 390px." },
+      { "path": "frontend/src/pages/AgentProfile/index.tsx", "change": "Thêm scroll={{ x: 'max-content' }} tránh đè chữ trên Mobile 390px." },
+      { "path": "frontend/src/pages/AgentTemplate/AgentTemplateList.tsx", "change": "Thêm scroll={{ x: 'max-content' }} tránh đè chữ trên Mobile 390px." },
+      { "path": "frontend/src/pages/Workflow/index.tsx", "change": "Thêm scroll={{ x: 'max-content' }} tránh đè chữ trên Mobile 390px." },
+      { "path": "frontend/src/pages/Survey/components/SurveyTable.tsx", "change": "Thêm scroll={{ x: 'max-content' }} tránh đè chữ trên Mobile 390px." }
+    ]
+  },
+  "beforeEvidence": {
+    "status": "REPRODUCED_FAIL",
+    "executedAt": "2026-11-25T01:26:38Z",
+    "summary": "repro-scenario.mjs --phase before trả EXIT_CODE=1 với 26 lỗi: 0/11 API trả HTTP 200 (toàn bộ 404 {\"detail\":\"Not Found\"}), Toast lỗi đỏ trên /maps, /llms, /agents, /workflows, /survey, và sai lệch hình học NAV (header.height=56px vs menu.height=68px, tràn dọc đè lên Card).",
+    "httpOrEventCheck": {
+      "endpointOrTrigger": "GET 11 endpoint /api/* qua gateway http://127.0.0.1:5173",
+      "statusCodeOrOutcome": "0/11 PASS (11 endpoint trả HTTP 404 Not Found)",
+      "requestSnippet": "GET /api/map-configs, /api/llm-configs, /api/agent-configs, /api/workflow-configs, /api/experiments, /api/surveys",
+      "responseSnippet": "{\"detail\":\"Not Found\"}"
+    },
+    "databaseOrStateCheck": {
+      "targetEntityOrTable": "urban_sim.db (trước nâng cấp)",
+      "observedState": "Chưa có các bảng platform_llm_configs, platform_map_configs, platform_agent_*, platform_workflow_configs, platform_surveys, platform_experiments."
+    },
+    "containerLogsSnippet": "Toàn bộ request tới /api/map-configs, /api/llm-configs, /api/experiments đều trả 404 Not Found trên Backend v2; DOM navMenu.height = 68px (> header.height = 56px).",
+    "screenshots": [
+      { "path": "artifacts/before/screenshots/maps-desktop.png", "caption": "Trước khi sửa (/maps Desktop): Khứa trắng hai bên NAV, menu xanh nhô 68px đè khung trắng, Toast đỏ {\"detail\":\"Not Found\"}." },
+      { "path": "artifacts/before/screenshots/llms-desktop.png", "caption": "Trước khi sửa (/llms Desktop): Toast đỏ bị lỗi chuỗi \"{error}\" và lệch chiều cao NAV." },
+      { "path": "artifacts/before/screenshots/console-desktop.png", "caption": "Trước khi sửa (/console Desktop): Trống dữ liệu do /api/experiments trả 404 và lỗi thanh NAV." },
+      { "path": "artifacts/before/screenshots/maps-mobile-390.png", "caption": "Trước khi sửa (/maps Mobile 390px): Lỗi API 404, không tải được danh sách bản đồ." }
+    ]
+  },
+  "afterEvidence": {
+    "status": "VERIFIED_PASS",
+    "executedAt": "2026-11-25T01:44:40Z",
+    "reproScriptSha256": "27ab19141a4733856e1783480c676c06dc67f32afdf1e28eeb7d25d73c0508d4",
+    "summary": "repro-scenario.mjs --phase after (chạy lại nguyên bản khóa SHA-256) trả EXIT_CODE=0 với 0 failures: 11/11 API HTTP 200, navHeader.height === 56 === navMenu.height (bottom=56), 0 Toast lỗi đỏ, 0 HTTP >= 400, 0 tràn ngang Mobile 390px.",
+    "httpOrEventCheck": {
+      "endpointOrTrigger": "GET 11 endpoint /api/* qua gateway http://127.0.0.1:5173",
+      "statusCodeOrOutcome": "11/11 PASS (HTTP 200 OK kèm JSON {data: [...]})",
+      "requestSnippet": "GET /api/llm-configs, /api/map-configs, /api/agent-configs, /api/agent-templates, /api/agent-profiles, /api/agent-classes?agent_type=citizen, /api/agent-blocks, /api/community/workflow/functions, /api/workflow-configs, /api/experiments, /api/surveys",
+      "responseSnippet": "200 OK — tất cả trả danh sách bản ghi SQLite v2 thật liên thông MulberryLane."
+    },
+    "databaseOrStateCheck": {
+      "targetEntityOrTable": "/workspace/.agentsociety/urban_sim.db (SQLite trong agentsociety-backend-1)",
+      "observedState": "Đủ 13 bảng: platform_llm_configs=1 (Fernet api_key_enc=True), platform_map_configs=2 (MulberryLane Zones + beijing.pb), platform_agent_templates=2, platform_agent_profiles=1, platform_agent_configs=1, platform_workflow_configs=1, platform_surveys=1, urban_sim_projects=1 (proj_5737687c333e gắn llm_config_id), urban_sim_personas=21, urban_sim_zones=9, urban_sim_runs=1."
+    },
+    "containerLogsSnippet": "backend-1: Application startup complete. GET /api/map-configs 200 OK, GET /api/experiments 200 OK, GET /api/llm-configs 200 OK, GET /api/surveys 200 OK, GET /health 200 OK.",
+    "screenshots": [
+      { "path": "artifacts/after/screenshots/maps-desktop.png", "caption": "Sau khi sửa (/maps Desktop): Thanh NAV phẳng 56px xanh đồng nhất không khứa trắng, hiển thị 2 bản đồ thật với tag Zone Topology v2 & Protobuf." },
+      { "path": "artifacts/after/screenshots/llms-desktop.png", "caption": "Sau khi sửa (/llms Desktop): Thanh NAV phẳng 56px, hiển thị Default Runtime LLM (.env) sạch lỗi." },
+      { "path": "artifacts/after/screenshots/console-desktop.png", "caption": "Sau khi sửa (/console Desktop): Hiển thị Run urbrun_l1_verify của MulberryLane và liên thông nút Mở sang Live Monitor." },
+      { "path": "artifacts/after/screenshots/maps-mobile-390.png", "caption": "Sau khi sửa (/maps Mobile 390px): Bảng cuộn ngang mượt bên trong Card, không đè chữ giữa Tên và Mô tả." },
+      { "path": "artifacts/after/screenshots/console-mobile-390.png", "caption": "Sau khi sửa (/console Mobile 390px): Nút + Tạo thí nghiệm gọn trong toolbar (right <= 259px), không còn nút Mở rộng tràn mép phải." }
+    ]
+  },
+  "humanLikeChecks": [
+    {
+      "step": "Home CTA & Hình học NAV trên Desktop 1440x900 và 1280x800",
+      "expected": "Nút CTA dẫn tới /urban-sim; 7 menu chính gọn 1 hàng trên 1280px; Header và Menu bằng đúng 56px không đè Card.",
+      "observed": "PASS — Home CTA mở /urban-sim; 7 mục menu hiển thị trọn 1 hàng ở 1280x800 (restVisible=false); trên /maps header=56x1440 tại y=0 và Card bắt đầu tại y=56; 0 console/HTTP/toast errors trên toàn bộ 11 route.",
+      "status": "PASS"
+    },
+    {
+      "step": "CRUD + F5 + Bảo mật Fernet API Key trên /llms & liên thông /urban-sim",
+      "expected": "Tạo LLM lưu thành công, F5 vẫn còn, Edit không lộ plaintext key mà hiển thị mask, cập nhật & xóa sạch được; dropdown trên /urban-sim thấy được cấu hình LLM.",
+      "observed": "PASS — Tạo 'LLM Test Verify' với key sk-test-verify-key-123 -> F5 còn nguyên -> Edit chỉ hiển thị '••••••' (kể cả khi bấm icon mắt) -> cập nhật mô tả -> xóa sạch; trên /urban-sim dropdown hiển thị 'Default Runtime LLM (.env) (openai: gpt-5.4-mini)'.",
+      "status": "PASS"
+    },
+    {
+      "step": "CRUD + F5 trên /survey & Liên thông /console -> UrbanSim Monitor",
+      "expected": "Tạo khảo sát -> F5 vẫn còn -> xóa sạch; trên /console thấy urbrun_l1_verify và bấm mở tới trang Live Monitor.",
+      "observed": "PASS — Tạo 'Khảo sát Test E2E' -> F5 còn nguyên -> xóa sạch; /console hiển thị urbrun_l1_verify, bấm nút 'Mở' chuyển đúng tới /urban-sim/proj_5737687c333e/runs/urbrun_l1_verify/monitor với 0 lỗi.",
+      "status": "PASS"
+    },
+    {
+      "step": "Responsive Mobile 390x844 (Hamburger Drawer + /maps, /console, /llms, /survey)",
+      "expected": "Drawer hiện đủ 7 menu & chuyển trang mượt; document không cuộn ngang; bảng không đè chữ và không nút nào bị cắt vượt 390px.",
+      "observed": "PASS — Drawer mở đủ 7 mục và chuyển trang mượt; horizontalScrolled=false trên tất cả màn hình; sau Iteration #1, bảng /maps, /llms, /survey cuộn ngang mượt bên trong container (overlaps=false) và nút '+ Tạo thí nghiệm' trên /console có right=258.4px <= 390px.",
+      "status": "PASS"
+    }
+  ],
+  "regressionSuite": {
+    "command": "docker run --rm ... pytest -p no:cacheprovider -v /tmp/tests/{test_checkpoint_failure,test_resume_cursor,framework/test_society_resume,integration/test_urban_sim_control_plane,integration/test_platform_unified_api} && cd frontend && npx tsc --noEmit && npm run lint && npm run build",
+    "status": "PASS",
+    "summary": "Backend Pytest: 28 passed, 1 warning in 23.22s (19 ca hồi quy checkpoint/resume + 7 ca UrbanSim L1 + 2 ca mới test_platform_unified_api). Frontend: tsc --noEmit, eslint --max-warnings=0, và vite build đều exit code 0."
+  },
+  "iterations": [
+    {
+      "iteration": 1,
+      "finding": "Browser subagent kiểm tra vòng 1 phát hiện 2 lỗi hiển thị ở Mobile 390x844: chữ cột Tên trên /maps chạm cột Mô tả do thiếu scroll ngang riêng cho bảng, và nút 'Mở rộng' trên thanh search ProTable của /console bị tràn mép phải (428.36px > 390px).",
+      "fixApplied": "Thêm scroll={{ x: 'max-content' }} cho toàn bộ Antd Table (Map, LLM, Agent, AgentProfile, AgentTemplateList, Workflow, SurveyTable) và chuyển nút '+ Tạo thí nghiệm' sang toolBarRender gọn nhẹ khi isMobile trên Console/index.tsx.",
+      "outcome": "Build Frontend (tsc/eslint/vite) & redeploy gateway thành công; chạy lại repro-scenario.mjs --phase after (EXIT_CODE=0) và browser subagent xác nhận Mobile 390x844 đạt 100% (overlaps=false, horizontalScrolled=false, nút '+ Tạo thí nghiệm' right=258.4px)."
+    }
+  ],
+  "environmentParity": [
+    "Môi trường Local Docker Desktop bật WITH_AUTH=false và chỉ có 1 tenant 'default'; trên môi trường Staging/Production bật auth, middleware sẽ cần map tenant_id từ JWT sang trường tenant_id của các bảng platform_*.",
+    "Lượt chạy thử trong /console là dữ liệu kiểm chứng L1 của MulberryLane (urbrun_l1_verify); phần kết nối thực chiến L2 tới sandbox mulberrylane.sandbox.demego.vn và atlas.demego.vn vẫn giữ nguyên tách biệt, chờ người dùng nhập API Key thật ở bước tiếp theo."
+  ]
+}

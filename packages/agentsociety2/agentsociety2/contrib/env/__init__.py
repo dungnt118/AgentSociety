@@ -1,7 +1,9 @@
 from agentsociety2.contrib.env.commons_tragedy import CommonsTragedyEnv
+from agentsociety2.contrib.env.demego_web_portal import DemegoWebPortalEnv
 from agentsociety2.contrib.env.economy_space import EconomySpace
 from agentsociety2.contrib.env.endowment_effect import EndowmentEffectEnv
 from agentsociety2.contrib.env.event_space.environment import EventSpace
+from agentsociety2.contrib.env.evidence_atlas_support import EvidenceAtlasSupportEnv
 from agentsociety2.contrib.env.global_information import GlobalInformationEnv
 from agentsociety2.contrib.env.implicit_association_test import (
     ImplicitAssociationTestEnv,
@@ -15,14 +17,17 @@ from agentsociety2.contrib.env.self_reference_effect import SelfReferenceEffectE
 from agentsociety2.contrib.env.simple_social_space import SimpleSocialSpace
 from agentsociety2.contrib.env.social_media import SocialMediaSpace
 from agentsociety2.contrib.env.trust_game import TrustGameEnv
+from agentsociety2.contrib.env.urban_comm_incident import UrbanCommAndIncidentEnv
 from agentsociety2.contrib.env.volunteer_dilemma import VolunteerDilemmaEnv
 from agentsociety2.contrib.env.weather_environment import WeatherEnvironment
 
 __all__ = [
     "CommonsTragedyEnv",
+    "DemegoWebPortalEnv",
     "EconomySpace",
     "EndowmentEffectEnv",
     "EventSpace",
+    "EvidenceAtlasSupportEnv",
     "GlobalInformationEnv",
     "ImplicitAssociationTestEnv",
     "MobilitySpace",
@@ -34,6 +39,7 @@ __all__ = [
     "SimpleSocialSpace",
     "SocialMediaSpace",
     "TrustGameEnv",
+    "UrbanCommAndIncidentEnv",
     "VolunteerDilemmaEnv",
     "WeatherEnvironment",
 ]

@@ -1,110 +1,108 @@
 ---
 name: event
-description: 事件管理：为 agent 启动、查询和停止行为事件。必须通过 ask_env 调用 EventSpace 工具。
+description: "Quản lý sự kiện hành vi: khởi tạo, tra cứu và kết thúc hoạt động cho agent thông qua ask_env gọi công cụ EventSpace."
 ---
 
-# Event
+# Event — Quản lý Sự kiện Hành vi
 
-EventSpace 管理每个 agent 的行为事件。每个 agent 同一时间最多有一个进行中的事件。**所有操作必须通过 `ask_env` 自然语言指令执行**。
+`EventSpace` quản lý trạng thái các sự kiện hoạt động của từng agent. Mỗi agent tại một thời điểm chỉ có tối đa một sự kiện đang diễn ra. **Toàn bộ thao tác bắt buộc thực hiện bằng chỉ dẫn ngôn ngữ tự nhiên thông qua `ask_env`**.
 
-## 环境概念
+## Khái niệm môi trường
 
-### 事件模型
+### Mô hình sự kiện
 
-每个事件包含：
-- `event_type`：事件类型
-- `event_name`：事件名称/描述（自由文本）
-- `expected_duration_seconds`：预计耗时（秒）
-- `start_time`：开始时间
-- `expected_end_time`：预计结束时间
+Mỗi sự kiện gồm các thuộc tính:
+- `event_type`: loại sự kiện
+- `event_name`: tên/mô tả chi tiết sự kiện (văn bản tự do)
+- `expected_duration_seconds`: thời lượng dự kiến (tính bằng giây)
+- `start_time`: thời điểm bắt đầu
+- `expected_end_time`: thời điểm dự kiến kết thúc
 
-事件会随时间自动推进。`get_current_event` 返回 `elapsed_seconds`（已用时间）、`remaining_seconds`（剩余时间）、`progress_percentage`（进度百分比）。
+Sự kiện tự động tiến triển theo thời gian mô phỏng. Công cụ `get_current_event` trả về `elapsed_seconds` (đã trôi qua), `remaining_seconds` (còn lại) và `progress_percentage` (tỷ lệ phần trăm hoàn thành).
 
-### 内置事件类型
+### Các loại sự kiện mặc định (`event_type`)
 
-| 类型 | 含义 |
+| Giá trị | Ý nghĩa |
 |------|------|
-| `sleep` | 睡眠/休息 |
-| `work` | 工作 |
-| `eating out` | 外出用餐 |
-| `home activity` | 居家活动 |
-| `shopping` | 购物 |
-| `leisure and entertainment` | 休闲娱乐 |
-| `other` | 其他（不属于以上类别的活动） |
+| `sleep` | Ngủ / nghỉ ngơi |
+| `work` | Làm việc |
+| `eating out` | Ăn ngoài |
+| `home activity` | Sinh hoạt tại nhà |
+| `shopping` | Mua sắm |
+| `leisure and entertainment` | Giải trí / thư giãn |
+| `other` | Hoạt động khác (ngoài các nhóm trên) |
 
-`event_name` 是自由文本，用于描述具体活动内容，agent 可根据实际需要自行命名。
+`event_name` là văn bản tự do mô tả cụ thể việc đang làm, agent tự đặt theo ngữ cảnh (ví dụ `"lunch at restaurant"`, `"morning coding session"`).
 
-## 可用工具
+## Công cụ khả dụng
 
-所有操作通过 `ask_env` 调用：
+Mọi thao tác gọi qua `ask_env`:
 
 ```
-ask_env(instruction="<自然语言指令>", ctx={"id": <your_id>})
+ask_env(instruction="<chỉ dẫn>", ctx={"id": <your_id>})
 ```
 
-### get_current_event（只读，observe）
+### get_current_event (chỉ đọc, quan sát)
 
-查询当前进行中的事件。返回事件类型、名称、状态、已用时间、剩余时间、进度百分比。无事件时返回 `None`。
+Tra cứu sự kiện đang diễn ra của agent: loại sự kiện, tên, trạng thái, thời gian đã chạy, thời gian còn lại, tiến độ %. Trả về `None` nếu chưa có sự kiện nào.
 
-### start_event（非只读）
+### start_event (ghi dữ liệu)
 
-启动一个新事件。同一 agent 同时只能有一个事件，启动前需先查询当前事件。
-如果当前事件的 `event_type` 已经等于你当前要执行的类型，且事件仍在进行中，
-不要调用 `stop_event`，也不要再次调用 `start_event`；这代表当前活动已在持续，只需保持当前状态或记录本步实际活动。
+Khởi tạo một sự kiện mới. Mỗi agent tại một thời điểm chỉ có 1 sự kiện nên cần kiểm tra sự kiện hiện tại trước khi gọi.
+Nếu sự kiện hiện tại đã có `event_type` trùng với loại bạn định thực hiện và vẫn đang chạy, **không** gọi `stop_event` và **không** gọi lại `start_event` — điều đó nghĩa là hoạt động đang tiếp diễn bình thường, chỉ cần duy trì trạng thái hoặc ghi nhận tiến độ.
 
-参数：
-- `person_id`：person ID
-- `event_type`：事件类型
-- `event_name`：事件名称（自由文本，如 "lunch at Italian restaurant"、"afternoon nap"）
-- `expected_duration_seconds`：预计耗时（秒）
+Tham số:
+- `person_id`: ID của agent
+- `event_type`: loại sự kiện
+- `event_name`: tên/mô tả tự do (ví dụ `"lunch at Italian restaurant"`, `"afternoon nap"`)
+- `expected_duration_seconds`: thời lượng dự kiến (đơn vị **giây**)
 
-只使用秒数，不使用 `duration_min`、`duration_minutes`、`duration`、`location_id`、`location_policy`、`home_aoi` 这类参数名。
-参考值：30min=1800，45min=2700，1h=3600，4h=14400，7h=25200，8h=28800。
+Chỉ sử dụng đơn vị giây; không dùng tên tham số sai như `duration_min`, `duration_minutes`, `duration`, `location_id`, `location_policy`, `home_aoi`.
+Quy đổi tham khảo: 30 phút = `1800`, 45 phút = `2700`, 1 giờ = `3600`, 4 giờ = `14400`, 7 giờ = `25200`, 8 giờ = `28800`.
 
-### stop_event（非只读）
+### stop_event (ghi dữ liệu)
 
-停止当前事件。参数：`person_id`、`status`（`"completed"` 正常完成 或 `"cancelled"` 中断/取消）。
+Kết thúc sự kiện hiện tại. Tham số: `person_id`, `status` (`"completed"` khi hoàn tất bình thường hoặc `"cancelled"` khi bị gián đoạn/hủy).
 
-## 示例
+## Ví dụ sử dụng
 
-### 查询事件
+### Kiểm tra sự kiện hiện tại
 
 ```
 ask_env(instruction="Check current event for person 0", ctx={"id": 0})
-→ 无事件（None）
+→ Không có sự kiện (None)
 ```
 
-### 启动事件
+### Bắt đầu sự kiện mới
 
 ```
 ask_env(instruction="Start a 'work' event for person 0, event name 'morning coding session', expected duration 14400 seconds", ctx={"id": 0})
-→ 事件已启动
+→ Sự kiện đã bắt đầu
 ```
 
-### 保持当前同类事件
+### Giữ nguyên sự kiện cùng loại đang chạy
 
 ```
 ask_env(instruction="Check current event for person 0", ctx={"id": 0})
-→ 当前已经是 sleep 事件时，不要再次启动 sleep，只保持睡眠状态。
+→ Đã có sẵn sự kiện sleep đang chạy: không tạo lại sleep mà tiếp tục duy trì trạng thái ngủ.
 ```
 
-### 停止事件
+### Dừng sự kiện
 
 ```
 ask_env(instruction="Stop current event for person 0 with status completed", ctx={"id": 0})
-→ 事件已结束
+→ Sự kiện đã kết thúc
 ```
 
-### 切换事件
+### Chuyển sang sự kiện khác
 
 ```
 ask_env(instruction="Stop current event for person 0, then start a 'leisure and entertainment' event, event name 'watching movie', expected duration 7200 seconds", ctx={"id": 0})
 ```
 
-## 约束
+## Ràng buộc bắt buộc
 
-1. **所有操作通过 `ask_env`**。不能直接调用 `start_event`、`get_current_event` 等函数。
-2. **同时最多一个事件**。启动不同类型的新事件前需先停止当前事件。
-3. **同类 active event 是持续状态**。例如当前已经有 `sleep` 事件且每日 Story 仍是 sleep segment，
-   本 step 应保持睡眠，不要取消并重开 sleep；只有真实切换到不同活动时才停止当前事件。
-4. **持续事件不要按 step 切片重开**。例如 00:00-07:00 的睡眠是一个长事件，不是每 15/30 分钟新建一个事件。
+1. **Mọi thao tác đi qua `ask_env`**. Không được gọi trực tiếp hàm `start_event`, `get_current_event`.
+2. **Tối đa 1 sự kiện tại một thời điểm**. Muốn chuyển sang hoạt động khác loại phải dừng sự kiện cũ trước.
+3. **Sự kiện đang chạy cùng loại là trạng thái liên tục**. Ví dụ đang có `sleep` và kịch bản hiện tại vẫn là ngủ thì giữ nguyên, không hủy rồi bật lại; chỉ dừng khi thực sự đổi sang hoạt động khác.
+4. **Không cắt nhỏ sự kiện dài theo từng bước**. Ví dụ giấc ngủ từ `00:00-07:00` là một sự kiện kéo dài liên tục, không tạo mới sau mỗi 15/30 phút.

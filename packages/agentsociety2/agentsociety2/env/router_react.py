@@ -3,8 +3,9 @@ ReAct Router Implementation
 使用ReAct模式（Reasoning + Acting）直接通过function calling选择并调用所有模块的所有函数
 """
 
+import inspect
 import json
-from typing import Any
+from typing import Any, Literal
 
 from litellm import AllMessageValues
 from openai.types.chat import ChatCompletionToolParam
@@ -35,12 +36,21 @@ class ReActRouter(RouterBase):
         env_modules: list[EnvBase],
         max_steps: int = 10,
         max_llm_call_retry: int = 10,
+        replay_writer: Any = None,
+        llm_clients_spec: dict[str, Any] | None = None,
+        final_summary_enabled: bool = False,
+        model_role: Literal["coder", "summary"] = "summary",
+        **kwargs: Any,
     ):
         super().__init__(
             env_modules=env_modules,
             max_steps=max_steps,
             max_llm_call_retry=max_llm_call_retry,
+            replay_writer=replay_writer,
+            llm_clients_spec=llm_clients_spec,
         )
+        self.final_summary_enabled = bool(final_summary_enabled)
+        self._model_role: Literal["coder", "summary"] = model_role
 
         # 预收集所有工具（包括readonly和非readonly）
         self._all_tools: list[ChatCompletionToolParam] = []
@@ -121,6 +131,12 @@ class ReActRouter(RouterBase):
         :returns: (ctx, answer) 元组
         """
         self.set_trace_context(trace_id, parent_span_id)
+        agent_id = (
+            ctx.get("agent_id", ctx.get("id", ctx.get("person_id")))
+            if isinstance(ctx, dict)
+            else None
+        )
+        _trace_token = self._set_trace_context(trace_id, parent_span_id, agent_id)
         try:
             # 添加当前时间信息到 ctx，以便工具调用可以访问
             self._add_current_time_to_ctx(ctx)
@@ -171,19 +187,14 @@ class ReActRouter(RouterBase):
                 step_count += 1
                 get_logger().debug(f"ReActRouter: Step {step_count}/{self.max_steps}")
 
-                # 调用LLM，允许function calling
+                # Truyền tools ở mọi bước ReAct để hỗ trợ chuỗi thao tác đa lượt
                 try:
-                    # 只在第一步提供tools，后续步骤通过对话历史传递工具调用信息
-                    tools_for_call = tools_with_status if step_count == 1 else None
-                    call_kwargs = {
-                        "model": "coder",
+                    call_kwargs: dict[str, Any] = {
+                        "model": self._model_role,
                         "messages": dialog,
+                        "tools": tools_with_status,
+                        "tool_choice": "auto",
                     }
-                    # 只有在提供tools时才设置tool_choice
-                    if tools_for_call:
-                        call_kwargs["tools"] = tools_for_call
-                        call_kwargs["tool_choice"] = "auto"
-
                     response = await self.acompletion_with_system_prompt(**call_kwargs)
                 except Exception as e:
                     get_logger().error(f"ReActRouter: LLM call failed: {e!s}")
@@ -191,18 +202,9 @@ class ReActRouter(RouterBase):
                     error_msg = str(e)
                     results["status"] = status
                     results["error"] = error_msg
-                    # 构建过程文本
-                    process_text = (
-                        json.dumps(execution_log, indent=2, default=str)
-                        if execution_log
-                        else ""
+                    return await self._build_final_response(
+                        ctx, instruction, results, execution_log, status, error_msg, ""
                     )
-                    # 使用基类的generate_final_answer生成最终答案
-                    final_answer, determined_status = await self.generate_final_answer(
-                        ctx, instruction, results, process_text, status, error_msg
-                    )
-                    results["status"] = determined_status
-                    return results, final_answer
 
                 # 检查是否有tool calls
                 message = response.choices[0].message  # type: ignore
@@ -229,7 +231,7 @@ class ReActRouter(RouterBase):
                             [
                                 {
                                     "id": tc.id,
-                                    "type": tc.type,
+                                    "type": getattr(tc, "type", "function") or "function",
                                     "function": {
                                         "name": tc.function.name,
                                         "arguments": tc.function.arguments,
@@ -248,20 +250,9 @@ class ReActRouter(RouterBase):
                     get_logger().info(
                         f"ReActRouter: Task completed after {step_count} steps"
                     )
-                    # 构建过程文本
-                    process_text = (
-                        json.dumps(execution_log, indent=2, default=str)
-                        if execution_log
-                        else ""
+                    return await self._build_final_response(
+                        ctx, instruction, results, execution_log, status, error, assistant_content
                     )
-                    # 使用基类的generate_final_answer生成最终答案
-                    final_answer, determined_status = await self.generate_final_answer(
-                        ctx, instruction, results, process_text, status, error
-                    )
-                    results["status"] = determined_status
-                    if error:
-                        results["error"] = error
-                    return results, final_answer
 
                 # 执行所有tool calls
                 tool_results = []
@@ -329,7 +320,7 @@ class ReActRouter(RouterBase):
                     # 执行工具调用
                     try:
                         result = await self._execute_tool(
-                            func_name, func_args, readonly
+                            func_name, func_args, readonly, ctx=ctx
                         )
                         result_str = json.dumps(result, default=str)
                         tool_results.append(
@@ -387,16 +378,36 @@ class ReActRouter(RouterBase):
 
                 # 将工具执行结果添加到对话
                 dialog.extend(tool_results)
+                if any(tc.function.name == "set_status" for tc in tool_calls) and results.get("status") in {"success", "fail", "error"}:
+                    return await self._build_final_response(
+                        ctx, instruction, results, execution_log, results.get("status", status), error, assistant_content
+                    )
 
             # 达到最大步数
             get_logger().warning(f"ReActRouter: Reached max steps ({self.max_steps})")
-            # 构建过程文本
+            return await self._build_final_response(
+                ctx, instruction, results, execution_log, status, error, ""
+            )
+        finally:
+            self._reset_trace_context(_trace_token)
+            self.clear_trace_context()
+
+    async def _build_final_response(
+        self,
+        ctx: dict,
+        instruction: str,
+        results: dict[str, Any],
+        execution_log: list[dict[str, Any]],
+        status: str,
+        error: str | None,
+        assistant_content: str,
+    ) -> tuple[dict, str]:
+        if self.final_summary_enabled:
             process_text = (
                 json.dumps(execution_log, indent=2, default=str)
                 if execution_log
                 else ""
             )
-            # 使用基类的generate_final_answer生成最终答案
             final_answer, determined_status = await self.generate_final_answer(
                 ctx, instruction, results, process_text, status, error
             )
@@ -404,11 +415,37 @@ class ReActRouter(RouterBase):
             if error:
                 results["error"] = error
             return results, final_answer
-        finally:
-            self.clear_trace_context()
 
-    async def _execute_tool(self, tool_name: str, args: dict, readonly: bool) -> Any:
-        """执行工具调用"""
+        results["status"] = status
+        if error:
+            results["error"] = error
+        summary_payload = {
+            k: v
+            for k, v in results.items()
+            if k not in {"status"}
+        }
+        if assistant_content.strip() and not summary_payload:
+            answer = assistant_content.strip()
+        else:
+            answer = json.dumps(
+                {
+                    "status": status,
+                    **({"summary": assistant_content.strip()} if assistant_content.strip() else {}),
+                    **summary_payload,
+                },
+                ensure_ascii=False,
+                default=str,
+            )
+        return results, answer
+
+    async def _execute_tool(
+        self,
+        tool_name: str,
+        args: dict,
+        readonly: bool,
+        ctx: dict | None = None,
+    ) -> Any:
+        """执行工具调用，并在路由器层强制绑定 ctx 中的 agent_id。"""
         # 获取工具所属的模块
         module = self._tool_name_to_module.get(tool_name)
         if not module:
@@ -431,21 +468,61 @@ class ReActRouter(RouterBase):
         if not tool_func:
             raise ValueError(f"Tool function for {tool_name} not found")
 
-        # 执行工具函数（可能是async）
-        import inspect
+        call_args = dict(args or {})
+        if (
+            tool_name == "ask_atlas_support"
+            and isinstance(ctx, dict)
+            and ctx.get("attach_screenshot")
+            and "attach_screenshot" not in call_args
+        ):
+            call_args["attach_screenshot"] = True
+        if isinstance(ctx, dict):
+            raw_bound = ctx.get("agent_id", ctx.get("id", ctx.get("person_id")))
+            if raw_bound is not None:
+                bound_id = int(raw_bound)
+                sig_params = inspect.signature(tool_func).parameters
+                for param_key in ("agent_id", "id", "person_id"):
+                    if param_key in sig_params:
+                        if param_key in call_args and str(call_args[param_key]) != str(bound_id):
+                            get_logger().warning(
+                                "ReActRouter ACL override: tool=%s param=%s requested=%r forced=%d",
+                                tool_name,
+                                param_key,
+                                call_args[param_key],
+                                bound_id,
+                            )
+                        call_args[param_key] = bound_id
 
+        # 执行工具函数（可能是async）
         if inspect.iscoroutinefunction(tool_func):
-            result = await tool_func(module, **args)
+            result = await tool_func(module, **call_args)
         else:
-            result = tool_func(module, **args)
+            result = tool_func(module, **call_args)
 
         return result
 
     def _build_initial_prompt(self, instruction: str, ctx: dict, readonly: bool) -> str:
         """构建初始prompt，包含ctx和instruction"""
         readonly_note = (
-            " (READONLY MODE - you can only use read-only tools)" if readonly else ""
+            " (READONLY MODE — ONLY read-only tools are exposed. If the instruction asks to login, click, fill, select, navigate, ask Atlas, report incident, send message, or mutate state, return status='fail' telling the caller to re-call ask_env with readonly=False!)"
+            if readonly
+            else ""
         )
+        support_routing_note = ""
+        if not readonly and "ask_atlas_support" in self._tool_name_to_module:
+            if isinstance(ctx, dict) and (ctx.get("attach_screenshot") or ctx.get("support_request")):
+                support_routing_note = (
+                    "\n5. **CRITICAL SUPPORT ROUTING**: The caller explicitly requested vendor support "
+                    "(`attach_screenshot=True` / `support_request=True`). You MUST invoke "
+                    "`ask_atlas_support(question=..., current_url=..., attach_screenshot=True)` — "
+                    "DO NOT replace it with web clicking or navigation tools."
+                )
+            else:
+                support_routing_note = (
+                    "\n5. **Support Escalation Routing**: Whenever `<instruction>` asks to question/consult "
+                    "the support team / CSKH Thần Nông or mentions `ask_atlas_support`, you MUST call "
+                    "`ask_atlas_support` with a natural Vietnamese `question` instead of clicking web menus."
+                )
         context_repr = repr(ctx)
 
         prompt = f"""You are an AI assistant helping an agent accomplish tasks in a virtual world simulation environment.
@@ -479,7 +556,7 @@ You have access to various environment tools. Use function calling to interact w
    - Use "in_progress" when the task is still executing and more steps are needed
    - Use "fail" when the task cannot be completed (e.g., unsupported instruction, missing data)
    - Use "error" when an error occurred during execution
-4. **Continue the conversation** until the task is complete or you determine it cannot be completed{readonly_note}
+4. **Continue the conversation** until the task is complete or you determine it cannot be completed{readonly_note}{support_routing_note}
 
 ## Status Meanings
 

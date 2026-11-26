@@ -1,0 +1,139 @@
+{
+  "base_url": "http://gateway:5173",
+  "nav_geometry": {
+    "header": {
+      "top": 0,
+      "bottom": 56,
+      "height": 56,
+      "width": 1440
+    },
+    "menu": {
+      "top": 0,
+      "bottom": 56,
+      "height": 56,
+      "width": 1087.40625
+    },
+    "items": [
+      {
+        "text": "Mô phỏng Khu đô thị",
+        "top": 0,
+        "bottom": 56,
+        "height": 56,
+        "width": 177.21875
+      },
+      {
+        "text": "LLM",
+        "top": 0,
+        "bottom": 56,
+        "height": 56,
+        "width": 75.234375
+      },
+      {
+        "text": "Bản đồ",
+        "top": 0,
+        "bottom": 56,
+        "height": 56,
+        "width": 92.375
+      },
+      {
+        "text": "Cư dân",
+        "top": 0,
+        "bottom": 56,
+        "height": 56,
+        "width": 94.734375
+      },
+      {
+        "text": "Quy trình",
+        "top": 0,
+        "bottom": 56,
+        "height": 56,
+        "width": 105.59375
+      },
+      {
+        "text": "Thí nghiệm",
+        "top": 0,
+        "bottom": 56,
+        "height": 56,
+        "width": 118.046875
+      },
+      {
+        "text": "Khảo sát",
+        "top": 0,
+        "bottom": 56,
+        "height": 56,
+        "width": 103.265625
+      },
+      {
+        "text": "",
+        "top": 0,
+        "bottom": 0,
+        "height": 0,
+        "width": 38
+      }
+    ]
+  },
+  "desktop": {
+    "/maps": {
+      "failed_requests": [],
+      "error_toasts": [],
+      "console_errors": [],
+      "page_errors": []
+    },
+    "/llms": {
+      "failed_requests": [],
+      "error_toasts": [],
+      "console_errors": [],
+      "page_errors": []
+    },
+    "/agents": {
+      "failed_requests": [],
+      "error_toasts": [],
+      "console_errors": [],
+      "page_errors": []
+    },
+    "/workflows": {
+      "failed_requests": [],
+      "error_toasts": [],
+      "console_errors": [],
+      "page_errors": []
+    },
+    "/console": {
+      "failed_requests": [],
+      "error_toasts": [],
+      "console_errors": [],
+      "page_errors": []
+    },
+    "/survey": {
+      "failed_requests": [],
+      "error_toasts": [],
+      "console_errors": [],
+      "page_errors": []
+    },
+    "/urban-sim": {
+      "failed_requests": [],
+      "error_toasts": [],
+      "console_errors": [],
+      "page_errors": []
+    }
+  },
+  "mobile": {
+    "/maps": {
+      "docScrollWidth": 390,
+      "innerWidth": 390,
+      "overflow": false,
+      "failed_requests": []
+    },
+    "/console": {
+      "docScrollWidth": 390,
+      "innerWidth": 390,
+      "overflow": false,
+      "failed_requests": []
+    },
+    "/urban-sim": {
+      "docScrollWidth": 390,
+      "innerWidth": 390,
+      "overflow": false,
+      "failed_requests": []
+    }
+  }
+}

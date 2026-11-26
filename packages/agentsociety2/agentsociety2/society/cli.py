@@ -10,6 +10,7 @@ import hashlib
 import json
 import os
 import shutil
+import signal
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
@@ -84,6 +85,7 @@ _FRESH_CLEANUP_ENTRIES = (
     "LLM_STATS.json",
     "run_manifest.resume.json",
     "pid.json",
+    "STOP_REQUESTED",
 )
 
 
@@ -430,6 +432,9 @@ class ExperimentRunner:
         self.society = None
         self._env_router = None
         replay_proxy: ReplayProxy | None = None
+        paused_mid_run = False
+        prev_sigint = None
+        prev_sigterm = None
         try:
             # 验证环境变量（必须在任何操作之前）
             self._validate_environment()
@@ -646,14 +651,30 @@ class ExperimentRunner:
                 trace_base = (self.run_dir / "trace").resolve()
                 trace_proxy = TraceProxy(trace_dir=str(trace_base))
 
+            effective_router_type = str(
+                (resume_meta.get("router_type") if resume_meta is not None else None)
+                or getattr(config, "router_type", "codegen")
+                or "codegen"
+            )
+            effective_max_cost_usd = (
+                resume_meta.get("max_cost_usd")
+                if resume_meta is not None and "max_cost_usd" in resume_meta
+                else getattr(config, "max_cost_usd", None)
+            )
+            if self.run_dir is not None and resume_meta is not None:
+                (self.run_dir / "STOP_REQUESTED").unlink(missing_ok=True)
+
             actor_cls = get_env_router_actor_class(max_concurrency=max_concurrency)
+            actor_router_kwargs: dict[str, Any] = {
+                "final_summary_enabled": config.codegen_router.final_summary_enabled,
+            }
+            if effective_router_type != "codegen":
+                actor_router_kwargs["router_type"] = effective_router_type
             env_actor = actor_cls.remote(
                 env_module_types,
                 env_kwargs,
                 str(self.run_dir.resolve()) if self.run_dir is not None else None,
-                {
-                    "final_summary_enabled": config.codegen_router.final_summary_enabled,
-                },
+                actor_router_kwargs,
                 llm_clients_spec,
                 replay_proxy,
                 trace_proxy,
@@ -709,6 +730,8 @@ class ExperimentRunner:
                     enable_replay=not replay_disable,
                     env_module_types=env_module_types,
                     env_kwargs=env_kwargs,
+                    router_type=effective_router_type,
+                    max_cost_usd=effective_max_cost_usd,
                 )
             # fresh 路径记录 steps_hash（resume 路径已由 from_workspace 从 checkpoint 还原）。
             self.society._steps_hash = steps_hash
@@ -718,6 +741,34 @@ class ExperimentRunner:
 
             # 执行步骤
             logger.info(f"Executing {len(steps)} steps...")
+            # Install graceful tick-boundary pause handlers for SIGINT / SIGTERM
+            def _request_graceful_pause(_signum, _frame):
+                self._should_terminate = True
+                if self.run_dir is not None:
+                    try:
+                        (self.run_dir / "STOP_REQUESTED").write_text(
+                            "signal_pause\n", encoding="utf-8"
+                        )
+                    except OSError:
+                        pass
+                if self.society is not None:
+                    try:
+                        self.society._should_terminate = True
+                        if not getattr(self.society, "_pause_reason", None):
+                            self.society._pause_reason = "signal_pause"
+                    except Exception:
+                        pass
+
+            try:
+                prev_sigint = signal.getsignal(signal.SIGINT)
+                signal.signal(signal.SIGINT, _request_graceful_pause)
+                if hasattr(signal, "SIGTERM"):
+                    prev_sigterm = signal.getsignal(signal.SIGTERM)
+                    signal.signal(signal.SIGTERM, _request_graceful_pause)
+            except ValueError:
+                # Non-main thread (e.g. pytest worker)
+                prev_sigint = None
+                prev_sigterm = None
             # resume 游标：
             # - completed_step_count：上一轮已完成的「顶层 step」数（含 Ask/Intervene/
             #   Questionnaire）。idx < 它的步骤整段跳过，避免重跑已执行的 Ask 产生
@@ -874,6 +925,18 @@ class ExperimentRunner:
                         logger.warning(f"Unknown step type: {step_type}, skipping")
                         continue
 
+                    paused_mid_run = bool(
+                        self._should_terminate
+                        or getattr(self.society, "_should_terminate", False) is True
+                    )
+                    if paused_mid_run:
+                        logger.info(
+                            "Run paused cleanly at tick boundary during step %d",
+                            step_idx,
+                        )
+                        self._update_progress()
+                        break
+
                     if isinstance(step, InterveneStep):
                         await self.society.commit_intervention()
                     else:
@@ -890,6 +953,10 @@ class ExperimentRunner:
                     # 外层统一标记 failed、记录错误并关闭自有资源。
                     raise
 
+            paused_mid_run = paused_mid_run or bool(
+                self._should_terminate
+                or getattr(self.society, "_should_terminate", False) is True
+            )
             self._log_llm_stats()
             step_failure_count = self.society._step_failure_count
         except (Exception, asyncio.CancelledError) as exc:
@@ -900,6 +967,15 @@ class ExperimentRunner:
             self._log_llm_stats()
             raise
         finally:
+            try:
+                if prev_sigint is not None:
+                    signal.signal(signal.SIGINT, prev_sigint)
+                if prev_sigterm is not None and hasattr(signal, "SIGTERM"):
+                    signal.signal(signal.SIGTERM, prev_sigterm)
+            except Exception:
+                pass
+            if self.run_dir is not None:
+                (self.run_dir / "STOP_REQUESTED").unlink(missing_ok=True)
             try:
                 if self.society is not None:
                     await self.society.close()
@@ -916,7 +992,11 @@ class ExperimentRunner:
                             "Error closing driver replay writer", exc_info=True
                         )
 
-        if step_failure_count:
+        if paused_mid_run:
+            pause_reason = getattr(self.society, "_pause_reason", None) or "user_requested"
+            logger.info("Experiment paused cleanly (%s)", pause_reason)
+            self._update_pid_file("paused", pause_reason=pause_reason)
+        elif step_failure_count:
             logger.warning(
                 "Experiment completed with %d agent step failure(s) "
                 "(see core_step_failures in replay for details)",

@@ -137,6 +137,9 @@ Minimal config example:
         # 合成记忆;问卷(ask 路径)不受影响。T1 实测:全部深夜 slot
         # 80/80 回答 sleep——每步都是花钱让模型说"我在睡觉"。
         self._idle_skip_enabled = bool(cfg.get("idle_skip_enabled", False))
+        self._require_pre_action_thought = bool(
+            cfg.get("require_pre_action_thought", False)
+        )
 
     # ==================== restore override ====================
 
@@ -323,22 +326,59 @@ Minimal config example:
         return await super().dispatch_react_tool(action, args, readonly=readonly)
 
     def _react_tool_overrides(self, *, readonly: bool) -> dict[str, Any]:
-        """按模式替换 ``finish`` 工具。
+        """按模式替换 ``finish`` 工具,并在开启 opt-in 时为 ``ask_env`` 增加行动前自述意图。
 
-        - ask / readonly 模式: 仅含答案的 ``finish``(外部问题)。
+        - ask / readonly 模式: 仅含答案的 ``finish``(外部问题), ``ask_env`` 保持原状。
         - step 模式: ``finish`` 带简短 ``final`` 且内联 ``memories``,让模型在结束 step 的同一次调用里记录 step 记忆,从而省去单独的记忆抽取
           LLM 调用。``step()`` 把捕获到的记忆送入 ``memory_runtime.after_step`` 。
         """
+        from agentsociety2.agent.base.tool_schema import react_tool_schemas
         from agentsociety2.agent.person_tools import (
             finish_ask_tool_schema,
             finish_step_tool_schema,
         )
 
-        return {
+        overrides: dict[str, Any] = {
             "finish": finish_ask_tool_schema()
             if readonly
             else finish_step_tool_schema()
         }
+        if not readonly and getattr(self, "_require_pre_action_thought", False):
+            base_ask_env = next(
+                (
+                    t
+                    for t in react_tool_schemas(
+                        enable_todo_list=False,
+                        enable_memory=False,
+                        disable_skills=True,
+                        readonly=False,
+                    )
+                    if (t.get("function") or {}).get("name") == "ask_env"
+                ),
+                None,
+            )
+            if base_ask_env is not None:
+                fn = dict(base_ask_env["function"])
+                params = dict(fn.get("parameters") or {})
+                props = dict(params.get("properties") or {})
+                thought_prop = {
+                    "type": "string",
+                    "description": (
+                        "First-person natural inner monologue (1-2 brief sentences in the "
+                        "persona's own voice and native language) stating WHY/WHAT goal "
+                        "you are about to pursue right BEFORE executing this action. "
+                        "No raw JSON or internal tool names."
+                    ),
+                }
+                params["properties"] = {"thought": thought_prop, **props}
+                req = list(params.get("required") or [])
+                if "thought" not in req:
+                    req = ["thought", *req]
+                params["required"] = req
+                params["additionalProperties"] = False
+                fn["parameters"] = params
+                overrides["ask_env"] = {"type": "function", "function": fn}
+        return overrides
 
     def _dispatch_memory_tool(
         self,

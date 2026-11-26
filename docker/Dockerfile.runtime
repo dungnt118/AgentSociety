@@ -33,6 +33,11 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     && uv pip check --system \
     && rm -f /tmp/reqs.txt
 
+RUN apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends libatomic1 \
+    && python -m playwright install --with-deps chromium \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY README.md LICENSE ./
 COPY packages/agentsociety2/ ./packages/agentsociety2/
 COPY examples/v2/daily_mobility/ ./examples/v2/daily_mobility/

@@ -99,6 +99,107 @@ def _brief_memories_summary(memories: Any) -> str:
 #: conversational fidelity, not to re-read it.
 _ASSISTANT_ECHO_MAX_CHARS = 4000
 
+_SENSITIVE_TRACE_KEY_RE = re.compile(
+    r"(password|passwd|pwd|pin|secret|token|api[_-]?key|authorization|cookie|credential)",
+    re.IGNORECASE,
+)
+
+
+def _sanitize_trace_args(value: Any, *, max_str: int = 500, depth: int = 0) -> Any:
+    """Redact sensitive keys and cap large string values before writing tool args to trace."""
+    if depth >= 4:
+        return _short_text(str(value), limit=max_str)
+    if isinstance(value, Mapping):
+        sanitized: dict[str, Any] = {}
+        for k, v in value.items():
+            key_str = str(k)
+            if _SENSITIVE_TRACE_KEY_RE.search(key_str):
+                sanitized[key_str] = "***REDACTED***"
+            else:
+                sanitized[key_str] = _sanitize_trace_args(
+                    v, max_str=max_str, depth=depth + 1
+                )
+        return sanitized
+    if isinstance(value, (list, tuple)):
+        return [
+            _sanitize_trace_args(item, max_str=max_str, depth=depth + 1)
+            for item in list(value)[:20]
+        ]
+    if isinstance(value, str):
+        return _short_text(value, limit=max_str)
+    return value
+
+
+def _extract_react_thought(
+    assistant_message: Mapping[str, Any] | None,
+    *,
+    decisions: list[ReactDecision] | None = None,
+    raw_message: Any = None,
+    limit: int = 1200,
+) -> str:
+    """Extract natural-language reasoning/thought text from a ReAct assistant turn.
+
+    Priority:
+    1. Natural-language ``assistant_message['content']`` (excluding raw tool-call text).
+    2. First-person ``thought`` argument recorded on ``decisions`` (opt-in ``ask_env`` schema).
+    3. ``reasoning_content`` / ``thinking_blocks`` on ``assistant_message`` or ``raw_message``
+       (trace-only fallback; never mutates the append-only message history).
+    """
+    raw_content = (
+        str(assistant_message.get("content") or "").strip()
+        if isinstance(assistant_message, Mapping)
+        else ""
+    )
+    if raw_content:
+        looks_like_raw_call = (
+            raw_content.startswith("{")
+            or raw_content.startswith("[")
+            or "<tool_call" in raw_content
+            or "<function=" in raw_content
+        )
+        if not looks_like_raw_call:
+            return _short_text(raw_content, limit=limit)
+
+    if decisions:
+        tool_thoughts: list[str] = []
+        seen_thoughts: set[str] = set()
+        for d in decisions:
+            t_arg = str((d.args or {}).get("thought") or "").strip()
+            if (
+                t_arg
+                and not t_arg.startswith("{")
+                and not t_arg.startswith("[")
+                and t_arg not in seen_thoughts
+            ):
+                seen_thoughts.add(t_arg)
+                tool_thoughts.append(t_arg)
+        if tool_thoughts:
+            return _short_text(" ".join(tool_thoughts), limit=limit)
+
+    def _read_reasoning_from(obj: Any) -> str:
+        if obj is None:
+            return ""
+        if isinstance(obj, Mapping):
+            rc = str(obj.get("reasoning_content") or "").strip()
+            blocks = obj.get("thinking_blocks")
+        else:
+            rc = str(getattr(obj, "reasoning_content", "") or "").strip()
+            blocks = getattr(obj, "thinking_blocks", None)
+        if rc:
+            return _short_text(rc, limit=limit)
+        if isinstance(blocks, list):
+            parts: list[str] = []
+            for block in blocks:
+                if isinstance(block, Mapping):
+                    txt = str(block.get("thinking") or block.get("text") or "").strip()
+                    if txt:
+                        parts.append(txt)
+            if parts:
+                return _short_text("\n".join(parts), limit=limit)
+        return ""
+
+    return _read_reasoning_from(assistant_message) or _read_reasoning_from(raw_message)
+
 
 def _tool_call_payload(call_id: str, name: str, arguments: str) -> dict[str, Any]:
     """构建一条 OpenAI ``tool_calls`` 条目。"""
@@ -266,6 +367,10 @@ _CONFIG_SCHEMA: dict[str, tuple] = {
     "idle_skip_enabled": (
         lambda v: None if isinstance(v, bool) else "布尔值",
         "睡眠段确定性快路径开关(person)。",
+    ),
+    "require_pre_action_thought": (
+        lambda v: None if isinstance(v, bool) else "布尔值",
+        "是否在 step 模式下要求 ask_env 附带简短的第一人称行动前自述意图。",
     ),
     "default_activated_skill_ids": (
         lambda v: (
@@ -1571,6 +1676,7 @@ The constructor ``__init__`` is arg-less.
             attributes={
                 "operation.type": "react",
                 "react.action": action,
+                "input.args": _sanitize_trace_args(args),
             },
         ) as span:
             result = await self.dispatch_react_tool(action, args, readonly=readonly)
@@ -2127,6 +2233,12 @@ The constructor ``__init__`` is arg-less.
                             ),
                         }
                     )
+                    thought_text = react_turn.thought or _extract_react_thought(
+                        react_turn.assistant_message,
+                        decisions=decisions,
+                    )
+                    if thought_text:
+                        turn_span.attributes["react.thought"] = thought_text
 
                     finish_d = next(
                         (d for d in decisions if d.action == "finish"), None
@@ -2536,10 +2648,17 @@ The constructor ``__init__`` is arg-less.
                     error,
                     {**_raw_assistant_message(content, tool_calls), **reasoning},
                 )
+            assistant_msg = {
+                **_decisions_assistant_message(content, decisions),
+                **reasoning,
+            }
             return ReactTurn(
                 decisions,
                 "",
-                {**_decisions_assistant_message(content, decisions), **reasoning},
+                assistant_msg,
+                thought=_extract_react_thought(
+                    assistant_msg, decisions=decisions, raw_message=message
+                ),
             )
 
         # No native tool calls: try parsing tool invocations from the text
@@ -2561,7 +2680,16 @@ The constructor ``__init__`` is arg-less.
             decisions, error = self._build_react_decisions(
                 text_calls, readonly=readonly
             )
-            return ReactTurn(decisions, error, assistant_message)
+            return ReactTurn(
+                decisions,
+                error,
+                assistant_message,
+                thought=""
+                if error
+                else _extract_react_thought(
+                    assistant_message, decisions=decisions, raw_message=message
+                ),
+            )
         # Ask mode: attempt a conservative answer extraction from free text
         # before giving up. This recovers obvious cases (e.g. {"answer": ...});
         # everything else falls through to an error so the loop corrects the

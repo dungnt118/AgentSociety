@@ -1,0 +1,270 @@
+{
+  "base_url": "http://gateway:5173",
+  "nav_geometry": {
+    "header": {
+      "top": 0,
+      "bottom": 56,
+      "height": 56,
+      "width": 1440
+    },
+    "menu": {
+      "top": 0,
+      "bottom": 68,
+      "height": 68,
+      "width": 1131.40625
+    },
+    "items": [
+      {
+        "text": "Mô phỏng Khu đô thị",
+        "top": 0,
+        "bottom": 68,
+        "height": 68,
+        "width": 185.21875
+      },
+      {
+        "text": "LLM",
+        "top": 0,
+        "bottom": 68,
+        "height": 68,
+        "width": 83.234375
+      },
+      {
+        "text": "Bản đồ",
+        "top": 0,
+        "bottom": 68,
+        "height": 68,
+        "width": 100.375
+      },
+      {
+        "text": "Cư dân",
+        "top": 0,
+        "bottom": 68,
+        "height": 68,
+        "width": 100.734375
+      },
+      {
+        "text": "Quy trình",
+        "top": 0,
+        "bottom": 68,
+        "height": 68,
+        "width": 113.59375
+      },
+      {
+        "text": "Thí nghiệm",
+        "top": 0,
+        "bottom": 68,
+        "height": 68,
+        "width": 126.046875
+      },
+      {
+        "text": "Khảo sát",
+        "top": 0,
+        "bottom": 68,
+        "height": 68,
+        "width": 87.265625
+      },
+      {
+        "text": "Tài liệu",
+        "top": 0,
+        "bottom": 68,
+        "height": 68,
+        "width": 77.140625
+      },
+      {
+        "text": "AgentSociety 2",
+        "top": 0,
+        "bottom": 68,
+        "height": 68,
+        "width": 148.171875
+      },
+      {
+        "text": "GitHub",
+        "top": 0,
+        "bottom": 68,
+        "height": 68,
+        "width": 97.578125
+      },
+      {
+        "text": "",
+        "top": 0,
+        "bottom": 0,
+        "height": 0,
+        "width": 46
+      }
+    ]
+  },
+  "desktop": {
+    "/maps": {
+      "failed_requests": [
+        {
+          "url": "http://gateway:5173/api/map-configs",
+          "status": 404
+        }
+      ],
+      "error_toasts": [
+        "Không tải được danh sách bản đồ: \"{\\\"detail\\\":\\\"Not Found\\\"}\"",
+        "Không tải được danh sách bản đồ: \"{\\\"detail\\\":\\\"Not Found\\\"}\""
+      ],
+      "console_errors": [
+        "Failed to load resource: the server responded with a status of 404 (Not Found)",
+        "Error: {\"detail\":\"Not Found\"}\n    at http://gateway:5173/assets/Map-Bl98i4HG.js:1:3204\n    at async http://gateway:5173/assets/Map-Bl98i4HG.js:1:3409"
+      ],
+      "page_errors": []
+    },
+    "/llms": {
+      "failed_requests": [
+        {
+          "url": "http://gateway:5173/api/llm-configs",
+          "status": 404
+        }
+      ],
+      "error_toasts": [
+        "Không tải được danh sách LLM: {error}",
+        "Không tải được danh sách LLM: {error}"
+      ],
+      "console_errors": [
+        "Failed to load resource: the server responded with a status of 404 (Not Found)",
+        "Error: {\"detail\":\"Not Found\"}\n    at http://gateway:5173/assets/LLM-BpHh0CDB.js:1:3683\n    at async http://gateway:5173/assets/LLM-BpHh0CDB.js:1:3881"
+      ],
+      "page_errors": []
+    },
+    "/agents": {
+      "failed_requests": [
+        {
+          "url": "http://gateway:5173/api/agent-templates",
+          "status": 404
+        },
+        {
+          "url": "http://gateway:5173/api/agent-profiles",
+          "status": 404
+        },
+        {
+          "url": "http://gateway:5173/api/agent-configs",
+          "status": 404
+        }
+      ],
+      "error_toasts": [
+        "Failed to load templates",
+        "Failed to load templates",
+        "Failed to load profiles",
+        "Failed to load profiles",
+        "Không tải được danh sách cư dân: \"{\\\"detail\\\":\\\"Not Found\\\"}\"",
+        "Không tải được danh sách cư dân: \"{\\\"detail\\\":\\\"Not Found\\\"}\""
+      ],
+      "console_errors": [
+        "Failed to load resource: the server responded with a status of 404 (Not Found)",
+        "Failed to load resource: the server responded with a status of 404 (Not Found)",
+        "Failed to load resource: the server responded with a status of 404 (Not Found)",
+        "Error: {\"detail\":\"Not Found\"}\n    at http://gateway:5173/assets/Agent-Bgy3aH-I.js:1:2766\n    at async http://gateway:5173/assets/Agent-Bgy3aH-I.js:1:2975"
+      ],
+      "page_errors": []
+    },
+    "/workflows": {
+      "failed_requests": [
+        {
+          "url": "http://gateway:5173/api/agent-classes?agent_type=citizen",
+          "status": 404
+        },
+        {
+          "url": "http://gateway:5173/api/agent-classes?agent_type=supervisor",
+          "status": 404
+        },
+        {
+          "url": "http://gateway:5173/api/community/workflow/functions",
+          "status": 404
+        },
+        {
+          "url": "http://gateway:5173/api/surveys",
+          "status": 404
+        },
+        {
+          "url": "http://gateway:5173/api/workflow-configs",
+          "status": 404
+        }
+      ],
+      "error_toasts": [
+        "Không tải được danh sách quy trình",
+        "Không tải được danh sách quy trình",
+        "Không tải được danh sách quy trình: \"{\\\"detail\\\":\\\"Not Found\\\"}\"",
+        "Không tải được danh sách quy trình: \"{\\\"detail\\\":\\\"Not Found\\\"}\""
+      ],
+      "console_errors": [
+        "Failed to load resource: the server responded with a status of 404 (Not Found)",
+        "Failed to load resource: the server responded with a status of 404 (Not Found)",
+        "Failed to load resource: the server responded with a status of 404 (Not Found)",
+        "Failed to load resource: the server responded with a status of 404 (Not Found)",
+        "Failed to load resource: the server responded with a status of 404 (Not Found)",
+        "获取 agent classes 失败: Error: {\"detail\":\"Not Found\"}\n    at http://gateway:5173/assets/Workflow-v2-V94pk.js:1:3286\n    at async Promise.all (index 0)\n    at async http://gateway:5173/assets/Workflow-v2-V94pk.js:1:3237",
+        "Failed to fetch survey list: Error: {\"detail\":\"Not Found\"}\n    at http://gateway:5173/assets/Workflow-v2-V94pk.js:1:3865",
+        "Error: {\"detail\":\"Not Found\"}\n    at http://gateway:5173/assets/Workflow-v2-V94pk.js:1:4084\n    at async http://gateway:5173/assets/Workflow-v2-V94pk.js:1:4296"
+      ],
+      "page_errors": []
+    },
+    "/console": {
+      "failed_requests": [
+        {
+          "url": "http://gateway:5173/api/experiments",
+          "status": 404
+        }
+      ],
+      "error_toasts": [],
+      "console_errors": [
+        "Failed to load resource: the server responded with a status of 404 (Not Found)"
+      ],
+      "page_errors": []
+    },
+    "/survey": {
+      "failed_requests": [
+        {
+          "url": "http://gateway:5173/api/surveys",
+          "status": 404
+        }
+      ],
+      "error_toasts": [
+        "Không tải được khảo sát: Error: {\"detail\":\"Not Found\"}",
+        "Không tải được khảo sát: Error: {\"detail\":\"Not Found\"}"
+      ],
+      "console_errors": [
+        "Failed to load resource: the server responded with a status of 404 (Not Found)",
+        "Failed to load surveys: Error: {\"detail\":\"Not Found\"}\n    at http://gateway:5173/assets/Survey-CL4LERWM.js:1:8102"
+      ],
+      "page_errors": []
+    },
+    "/urban-sim": {
+      "failed_requests": [],
+      "error_toasts": [],
+      "console_errors": [],
+      "page_errors": []
+    }
+  },
+  "mobile": {
+    "/maps": {
+      "docScrollWidth": 390,
+      "innerWidth": 390,
+      "overflow": false,
+      "failed_requests": [
+        {
+          "url": "http://gateway:5173/api/map-configs",
+          "status": 404
+        }
+      ]
+    },
+    "/console": {
+      "docScrollWidth": 390,
+      "innerWidth": 390,
+      "overflow": false,
+      "failed_requests": [
+        {
+          "url": "http://gateway:5173/api/experiments",
+          "status": 404
+        }
+      ]
+    },
+    "/urban-sim": {
+      "docScrollWidth": 390,
+      "innerWidth": 390,
+      "overflow": false,
+      "failed_requests": []
+    }
+  }
+}

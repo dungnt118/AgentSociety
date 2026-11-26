@@ -26,6 +26,10 @@ const AgentTemplate = lazy(() => import('./pages/AgentTemplate/AgentTemplateList
 const Bill = lazy(() => import('./pages/Bill'))
 const AgentTemplateForm = lazy(() => import('./pages/AgentTemplate/AgentTemplateForm'))
 const Skills = lazy(() => import('./pages/Skills'))
+const UrbanSimConsolePage = lazy(() => import('./pages/UrbanSim'))
+const UrbanSimPersonaMatrixPage = lazy(() => import('./pages/UrbanSim/PersonaMatrixPage'))
+const UrbanSimAtlasConfigPage = lazy(() => import('./pages/UrbanSim/AtlasConfigPage'))
+const UrbanSimRunMonitorPage = lazy(() => import('./pages/UrbanSim/RunMonitorPage'))
 
 const routeFallback = (
     <div style={{ display: 'flex', justifyContent: 'center', padding: 48 }}>
@@ -170,6 +174,38 @@ const router = createBrowserRouter([
         ),
     },
     {
+        path: "/urban-sim",
+        element: (
+            authProvider(
+                <RootLayout selectedKey='/urban-sim'>{withSuspense(<UrbanSimConsolePage />)}</RootLayout>
+            )
+        ),
+    },
+    {
+        path: "/urban-sim/:projectId/personas",
+        element: (
+            authProvider(
+                <RootLayout selectedKey='/urban-sim'>{withSuspense(<UrbanSimPersonaMatrixPage />)}</RootLayout>
+            )
+        ),
+    },
+    {
+        path: "/urban-sim/:projectId/atlas",
+        element: (
+            authProvider(
+                <RootLayout selectedKey='/urban-sim'>{withSuspense(<UrbanSimAtlasConfigPage />)}</RootLayout>
+            )
+        ),
+    },
+    {
+        path: "/urban-sim/:projectId/runs/:runId/monitor",
+        element: (
+            authProvider(
+                <RootLayout selectedKey='/urban-sim'>{withSuspense(<UrbanSimRunMonitorPage />)}</RootLayout>
+            )
+        ),
+    },
+    {
         path: "*",
         element: <Navigate to="/" />,
     }
@@ -186,7 +222,7 @@ const theme: ThemeConfig = {
     components: {
         Layout: {
             lightSiderBg: "#F8F8F8",
-            headerBg: "#FFFFFF",
+            headerBg: "#000088",
         },
         Button: {
             algorithm: true,

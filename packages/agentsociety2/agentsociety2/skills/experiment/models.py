@@ -15,6 +15,7 @@ AGENT_CONFIG_KEYS: frozenset[str] = frozenset(
         "enable_memory",
         "enable_todo_list",
         "idle_skip_enabled",
+        "require_pre_action_thought",
         "disabled_skill_ids",
         "default_activated_skill_ids",
         "extra_skill_paths",

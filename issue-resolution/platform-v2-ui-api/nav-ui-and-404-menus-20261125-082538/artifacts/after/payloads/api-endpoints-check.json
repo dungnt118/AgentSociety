@@ -1,0 +1,90 @@
+[
+  {
+    "endpoint": "/api/llm-configs",
+    "status": 200,
+    "hasDataArray": true,
+    "count": 1,
+    "snippet": "{\"data\":[{\"id\":\"5fd2afe1-b093-44e2-bc45-f38d8253bdf9\",\"tenant_id\":\"default\",\"name\":\"Default Runtime LLM (.env)\",\"description\":\"Cấu hình AI mặc định nạp từ biến môi trường Docker Runtime, dùng chung cho UrbanSim & thí ngh",
+    "passed": true
+  },
+  {
+    "endpoint": "/api/map-configs",
+    "status": 200,
+    "hasDataArray": true,
+    "count": 2,
+    "snippet": "{\"data\":[{\"id\":\"06f4d740-5c44-492b-9b22-3094c019baf7\",\"tenant_id\":\"default\",\"name\":\"Daily Mobility Map (beijing.pb)\",\"description\":\"Bản đồ giao thông mẫu phục vụ riêng demo Daily Mobility.\",\"map_type\":\"protobuf\",\"linked_",
+    "passed": true
+  },
+  {
+    "endpoint": "/api/agent-configs",
+    "status": 200,
+    "hasDataArray": true,
+    "count": 1,
+    "snippet": "{\"data\":[{\"id\":\"2d0ec598-9a58-47d1-acfa-4b935e344a09\",\"tenant_id\":\"default\",\"name\":\"Đội hình MulberryLane (11 BQL + 10 Cư dân)\",\"description\":\"Cấu hình tập thể nhân sự Ban Quản lý (0 kiến thức QLTN) và Chủ hộ cư dân Mulb",
+    "passed": true
+  },
+  {
+    "endpoint": "/api/agent-templates",
+    "status": 200,
+    "hasDataArray": true,
+    "count": 2,
+    "snippet": "{\"data\":[{\"id\":\"924d9cf5-be11-4e8c-a486-d62b53eb0716\",\"tenant_id\":\"default\",\"name\":\"MulberryLane BQL Supervisor (ReAct)\",\"description\":\"Giám sát điều phối ReActRouter + ACL 2 tầng cho nhân sự Ban Quản lý.\",\"agent_type\":\"",
+    "passed": true
+  },
+  {
+    "endpoint": "/api/agent-profiles",
+    "status": 200,
+    "hasDataArray": true,
+    "count": 1,
+    "snippet": "{\"data\":[{\"id\":\"08324495-1da0-411e-a0b7-d007b6628db7\",\"tenant_id\":\"default\",\"name\":\"MulberryLane — 21 Persona (11 BQL + 10 Cư dân)\",\"description\":\"Hồ sơ nhân khẩu & vai trò vận hành tòa nhà MulberryLane đồng bộ trực tiếp",
+    "passed": true
+  },
+  {
+    "endpoint": "/api/agent-classes?agent_type=citizen",
+    "status": 200,
+    "hasDataArray": true,
+    "count": 10,
+    "snippet": "{\"data\":[{\"value\":\"PersonAgent\",\"label\":\"PersonAgent (AgentSociety v2)\"},{\"value\":\"CommonsTragedyAgent\",\"label\":\"CommonsTragedyAgent (CommonsTragedyAgent)\"},{\"value\":\"LLMDonorAgent\",\"label\":\"LLMDonorAgent (LLMDonorAgent)",
+    "passed": true
+  },
+  {
+    "endpoint": "/api/agent-blocks",
+    "status": 200,
+    "hasDataArray": true,
+    "count": 4,
+    "snippet": "{\"data\":[\"UrbanCommIncidentEnv\",\"DemegoWebPortalEnv\",\"EvidenceAtlasSupportEnv\",\"DailyGuidanceSkill\"]}",
+    "passed": true
+  },
+  {
+    "endpoint": "/api/community/workflow/functions",
+    "status": 200,
+    "hasDataArray": true,
+    "count": 4,
+    "snippet": "{\"data\":[\"mulberrylane_daily_dispatch\",\"resident_incident_escalation\",\"evidence_atlas_cskh_lookup\",\"post_shift_satisfaction_survey\"]}",
+    "passed": true
+  },
+  {
+    "endpoint": "/api/workflow-configs",
+    "status": 200,
+    "hasDataArray": true,
+    "count": 1,
+    "snippet": "{\"data\":[{\"id\":\"e26575ca-92ff-4903-8b07-c190f69c8786\",\"tenant_id\":\"default\",\"name\":\"Kịch bản Vận hành MulberryLane (8 bước × 15 phút)\",\"description\":\"Quy trình chuẩn cho bài toán mô phỏng phần mềm quản lý khu đô thị v2.\"",
+    "passed": true
+  },
+  {
+    "endpoint": "/api/experiments",
+    "status": 200,
+    "hasDataArray": true,
+    "count": 1,
+    "snippet": "{\"data\":[{\"id\":\"urbrun_l1_verify\",\"name\":\"[UrbanSim] Chung cư MulberryLane — Vận hành Toàn cảnh (21 Persona) — Run #1\",\"num_day\":1,\"status\":2,\"cur_day\":1,\"cur_t\":900,\"config\":\"{\\n  \\\"source\\\": \\\"urban_sim\\\",\\n  \\\"project",
+    "passed": true
+  },
+  {
+    "endpoint": "/api/surveys",
+    "status": 200,
+    "hasDataArray": true,
+    "count": 1,
+    "snippet": "{\"data\":[{\"id\":\"25c9442f-dc07-4794-bfbd-05bd8e88237c\",\"tenant_id\":\"default\",\"name\":\"Khảo sát Trải nghiệm Vận hành QLTN & Hài lòng Cư dân MulberryLane\",\"data\":{\"title\":\"Khảo sát Trải nghiệm Vận hành QLTN & Hài lòng Cư dân",
+    "passed": true
+  }
+]

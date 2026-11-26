@@ -73,7 +73,7 @@ const HomePage = () => {
 
             {/* 按钮组 */}
             <Space size="large">
-                <Link href="/console">
+                <Link href="/urban-sim">
                     <Button
                         type="default"
                         size="large"

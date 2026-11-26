@@ -15,6 +15,7 @@ _SAFE_PATH_PART_RE = re.compile(
     r"^(?:[A-Za-z0-9_]|[.][A-Za-z0-9_])(?:[A-Za-z0-9_-]|[.][A-Za-z0-9_-])*$"
 )
 _ARTIFACT_NAME_RE = re.compile(r"^(?:[a-zA-Z0-9][a-zA-Z0-9_.-]*\.md|questionnaire_step_[0-9]+_[0-9]{8}_[0-9]{6}\.json)$")
+_SAFE_IMAGE_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*\.(?:png|jpg|jpeg|webp)$", re.IGNORECASE)
 
 
 def _configured_workspace_root() -> str:
@@ -260,3 +261,30 @@ def extract_zip_under(dest_dir: Path, zf: zipfile.ZipFile) -> None:
         target.parent.mkdir(parents=True, exist_ok=True)
         with zf.open(member, "r") as source, target.open("wb") as destination:
             shutil.copyfileobj(source, destination)
+
+
+def resolve_urban_sim_run_dir(workspace_root: Path, run_dir_str: str) -> Path:
+    """Resolve and validate that an urban simulation run directory stays under ``workspace_root``."""
+    base = Path(os.path.realpath(os.fspath(workspace_root)))
+    candidate = Path(os.path.realpath(os.path.expanduser(run_dir_str)))
+    return _ensure_under(base, candidate, detail="Run directory escapes workspace root")
+
+
+def resolve_urban_sim_screenshot(run_dir: Path, filename: str) -> Path:
+    """Validate screenshot filename under ``<run_dir>/artifacts/screenshots/`` (raster images only)."""
+    cleaned = (filename or "").strip()
+    if "/" in cleaned or "\\" in cleaned or cleaned in {"", ".", ".."}:
+        raise HTTPException(status_code=400, detail="Invalid screenshot filename")
+    if not _SAFE_IMAGE_NAME_RE.fullmatch(cleaned):
+        raise HTTPException(status_code=400, detail="Unsupported screenshot filename")
+    return resolve_under_root(run_dir, "artifacts", "screenshots", cleaned)
+
+
+def resolve_urban_sim_map_image(workspace_root: Path, filename: str) -> Path:
+    """Validate uploaded 2D map filename under ``<workspace_root>/.agentsociety/urban_sim_maps/``."""
+    cleaned = (filename or "").strip()
+    if "/" in cleaned or "\\" in cleaned or cleaned in {"", ".", ".."}:
+        raise HTTPException(status_code=400, detail="Invalid map image filename")
+    if not _SAFE_IMAGE_NAME_RE.fullmatch(cleaned):
+        raise HTTPException(status_code=400, detail="Unsupported map image filename")
+    return resolve_under_root(workspace_root, ".agentsociety", "urban_sim_maps", cleaned)

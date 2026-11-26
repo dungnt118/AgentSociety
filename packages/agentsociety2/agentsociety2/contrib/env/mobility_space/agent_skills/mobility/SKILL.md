@@ -1,136 +1,135 @@
 ---
 name: mobility
-description: 城市移动导航：在路网中移动 agent 到 AOI/POI、搜索周边 POI、用引力模型推荐目的地。必须通过 ask_env 调用 MobilitySpace 工具。
+description: "Điều hướng di chuyển đô thị: đưa agent tới AOI/POI trên mạng lưới giao thông, tìm địa điểm lân cận và gợi ý điểm đến theo mô hình trọng lực qua ask_env (MobilitySpace)."
 ---
 
-# Mobility
+# Mobility — Điều hướng Di chuyển Đô thị
 
-MobilitySpace 是一个基于真实城市路网的移动仿真环境。**所有操作必须通过 `ask_env` 自然语言指令执行**，环境路由器会自动将指令转换为 MobilitySpace 工具调用。
+`MobilitySpace` là môi trường mô phỏng di chuyển trên mạng lưới đường giao thông đô thị thực tế. **Toàn bộ thao tác phải gọi qua `ask_env`** để bộ định tuyến môi trường chuyển thành lời gọi công cụ của MobilitySpace.
 
-## 环境概念
+## Khái niệm môi trường
 
-### AOI
+### AOI (Area of Interest)
 
-Area of Interest，城市功能区（住宅区、商业区、办公区等）。ID 从 `500000000` 开始。每个 person 有 `home_aoi`（家）和 `work_aoi`（工作地）。
+Khu chức năng đô thị (khu dân cư, thương mại, văn phòng...). ID bắt đầu từ `500000000`. Mỗi agent có `home_aoi` (nhà) và `work_aoi` (nơi làm việc).
 
-### POI
+### POI (Point of Interest)
 
-Point of Interest，具体地点（餐厅、咖啡馆、医院、公园等）。ID 从 `700000000` 开始。每个 POI 属于某个 AOI。
+Địa điểm cụ thể (nhà hàng, quán cà phê, bệnh viện, công viên...). ID bắt đầu từ `700000000`. Mỗi POI thuộc về một AOI.
 
-### 移动状态
+### Trạng thái di chuyển
 
-| 状态 | 含义 |
+| Trạng thái | Ý nghĩa |
 |------|------|
-| `idle` | 空闲，可以发起移动 |
-| `moving` | 正在沿路网移动中 |
+| `idle` | Đang dừng/rảnh, có thể bắt đầu chuyến đi mới |
+| `moving` | Đang di chuyển trên mạng lưới đường |
 
-`moving` 状态下再次调用 `move_to` 会打断当前移动，除非确实需要改变目的地，否则不应这样做。
+Khi đang ở trạng thái `moving`, gọi lại `move_to` sẽ ngắt hành trình hiện tại — chỉ thực hiện nếu thực sự cần đổi điểm đến.
 
-### 位置信息
+### Thông tin vị trí
 
-`get_person` 返回的 `position` 包含 `aoi_id`、`poi_id`、`xy` 坐标、`lnglat` 经纬度、`kind`（`"aoi"` 或 `"lane"`）。
+`position` trả về từ `get_person` gồm: `aoi_id`, `poi_id`, tọa độ `xy`, kinh vĩ độ `lnglat`, và `kind` (`"aoi"` hoặc `"lane"`).
 
-### 移动模式
+### Phương thức di chuyển
 
-| 模式 | 典型场景 |
+| Phương thức | Ngữ cảnh phổ biến |
 |------|----------|
-| `walking` | 短距离（< 1000m） |
-| `driving` | 长距离（≥ 1000m） |
+| `walking` | Quãng đường ngắn (< 1000m) |
+| `driving` | Quãng đường dài (≥ 1000m) |
 
-行程用时以 `move_to` 返回的 `eta`（仿真秒数）为准，它与环境实际采用的
-移动速度一致。不要用固定步行或驾车速度另算到达时间。
+Thời gian di chuyển thực tế lấy theo `eta` (giây mô phỏng) do `move_to` trả về vì khớp trực tiếp với vận tốc của môi trường; không tự ước lượng bằng tốc độ cố định.
 
-### POI 类别
+### Danh mục loại POI (`category`)
 
-搜索 POI 时可用的类别：
+Các nhóm loại địa điểm hỗ trợ khi tìm kiếm POI:
 
-| 一级类别 | 典型二级类别 |
+| Nhóm cấp 1 | Ví dụ loại chi tiết (cấp 2) |
 |----------|-------------|
-| `restaurant` | bar, cafe, fast_food, restaurant, pub, food_court |
-| `outdoor_activity` | park, playground, garden, beach_resort, fishing |
-| `indoor_entertainment` | cinema, fitness_centre, bowling_alley, theatre, bar |
-| `sports_facility` | sports_centre, swimming_pool, stadium, ice_rink |
-| `cultural_and_artistic` | arts_centre, museum, cinema, nightclub |
-| `education_institution` | school, university, library, kindergarten |
-| `medical_care` | hospital, clinic, pharmacy, dentist |
-| `financial_service` | bank, atm |
-| `public_service` | police, post_office, townhall |
-| `transportation_facility` | parking, bus_station, fuel |
-| `children_playground` | playground, summer_camp |
-| `nature_and_wildlife_observation` | nature_reserve, bird_hide |
-| `water_activity` | swimming_area, marina |
-| `other_special_purpose` | marketplace, place_of_worship |
+| `restaurant` | `bar`, `cafe`, `fast_food`, `restaurant`, `pub`, `food_court` |
+| `outdoor_activity` | `park`, `playground`, `garden`, `beach_resort`, `fishing` |
+| `indoor_entertainment` | `cinema`, `fitness_centre`, `bowling_alley`, `theatre`, `bar` |
+| `sports_facility` | `sports_centre`, `swimming_pool`, `stadium`, `ice_rink` |
+| `cultural_and_artistic` | `arts_centre`, `museum`, `cinema`, `nightclub` |
+| `education_institution` | `school`, `university`, `library`, `kindergarten` |
+| `medical_care` | `hospital`, `clinic`, `pharmacy`, `dentist` |
+| `financial_service` | `bank`, `atm` |
+| `public_service` | `police`, `post_office`, `townhall` |
+| `transportation_facility` | `parking`, `bus_station`, `fuel` |
+| `children_playground` | `playground`, `summer_camp` |
+| `nature_and_wildlife_observation` | `nature_reserve`, `bird_hide` |
+| `water_activity` | `swimming_area`, `marina` |
+| `other_special_purpose` | `marketplace`, `place_of_worship` |
 
-可传入一级类别（如 `restaurant`）匹配该类别下所有二级类别，或传入二级类别（如 `cafe`）精确匹配。
+Có thể truyền tên nhóm cấp 1 (như `restaurant`) để khớp tất cả loại con, hoặc truyền loại chi tiết (như `cafe`) để lọc chính xác.
 
-## 可用工具
+## Công cụ khả dụng
 
-所有操作通过 `ask_env` 调用：
+Mọi thao tác gọi qua `ask_env`:
 
 ```
-ask_env(instruction="<自然语言指令>", ctx={"id": <your_id>})
+ask_env(instruction="<chỉ dẫn>", ctx={"id": <your_id>})
 ```
 
-### get_person（只读，observe）
+### get_person (chỉ đọc, quan sát)
 
-获取当前状态：位置、状态（idle/moving）、移动目标、附近 POI 概况（按一级类别汇总，含最近 POI 名称和距离）、home_aoi、work_aoi。
+Lấy trạng thái hiện tại: vị trí, trạng thái (`idle`/`moving`), đích đến, tổng quan POI lân cận (gom theo nhóm cấp 1 kèm POI gần nhất và khoảng cách), `home_aoi`, `work_aoi`.
 
 ```
 ask_env(instruction="<observe>", ctx={"id": <your_id>})
 ```
 
-### recommend_poi_by_gravity（只读）
+### recommend_poi_by_gravity (chỉ đọc)
 
-用引力模型推荐目的地 POI。综合考虑距离和周边同类 POI 密度，比手动搜索更合理。
+Dùng mô hình trọng lực để gợi ý POI phù hợp dựa trên khoảng cách và mật độ POI cùng loại xung quanh (tự nhiên hơn tìm kiếm thủ công).
 
-参数：`person_id`、`category`（POI 类别或 `None` 不限）、`radius`（搜索半径，米）、`exclude_home_work`（是否排除家/工作地的 POI）。
+Tham số: `person_id`, `category` (tên loại POI hoặc `None` nếu không giới hạn), `radius` (bán kính tìm kiếm theo mét), `exclude_home_work` (có loại trừ khu vực nhà/cơ quan hay không).
 
-返回推荐 POI 的 id、name、category、distance、aoi_id，以及 `recommended_mode`（建议出行方式）。
+Trả về: `id`, `name`, `category`, `distance`, `aoi_id` của POI được gợi ý cùng `recommended_mode` (phương thức di chuyển khuyến nghị).
 
-### find_nearby_pois（只读）
+### find_nearby_pois (chỉ đọc)
 
-搜索周边 POI 列表。参数：`x, y`（搜索中心坐标）、`category`（类别或 `None`）、`radius`（搜索半径，米）。返回 id、name、category、distance、aoi_id。
+Tìm danh sách POI lân cận. Tham số: `x, y` (tọa độ tâm), `category` (loại hoặc `None`), `radius` (bán kính tính theo mét). Trả về `id`, `name`, `category`, `distance`, `aoi_id`.
 
-### get_poi（只读）
+### get_poi (chỉ đọc)
 
-查询单个 POI 详情。参数：`poi_id`。返回 id、name、category、position、aoi_id。
+Tra cứu chi tiết một POI. Tham số: `poi_id`. Trả về `id`, `name`, `category`, `position`, `aoi_id`.
 
-### move_to（非只读）
+### move_to (ghi dữ liệu)
 
-发起移动。参数：`person_id`、`aoi_id_or_poi_id`（目标 AOI ID 或 POI ID，≥700000000 为 POI）、`mode`（`"walking"` 或 `"driving"`）。
+Bắt đầu di chuyển. Tham số: `person_id`, `aoi_id_or_poi_id` (ID AOI hoặc ID POI; giá trị ≥ `700000000` là POI), `mode` (`"walking"` hoặc `"driving"`).
 
-发起后状态变为 `moving`，后续 step 中自动沿路网移动，到达后自动恢复为 `idle`。
+Sau khi gọi, trạng thái chuyển thành `moving`, tự động di chuyển trên đường ở các bước sau và trở về `idle` khi tới nơi.
 
-## 示例
+## Ví dụ sử dụng
 
-### 观察状态
+### Quan sát vị trí
 
 ```
 ask_env(instruction="<observe>", ctx={"id": 0})
 → home_aoi=500000007, work_aoi=500000123, status=idle, aoi_id=500000007
 ```
 
-### 去工作地
+### Đi đến nơi làm việc
 
 ```
 ask_env(instruction="Move person 0 to AOI 500000123 using driving", ctx={"id": 0})
 → status=moving
 ```
 
-### 搜索餐厅并前往
+### Tìm quán ăn/cà phê và di chuyển tới đó
 
 ```
 ask_env(instruction="Use recommend_poi_by_gravity for person 0, category restaurant, radius 1200, excluding home/work AOIs. Then move to the recommended POI.", ctx={"id": 0})
-→ 推荐 cafe（800m），walking 前往
+→ Gợi ý cafe (800m), di chuyển bằng walking
 ```
 
-### 回家
+### Quay về nhà
 
 ```
 ask_env(instruction="Move person 0 to AOI 500000007 using driving", ctx={"id": 0})
 ```
 
-## 约束
+## Ràng buộc bắt buộc
 
-1. **所有操作通过 `ask_env`**。不能直接调用 `move_to`、`get_person` 等函数。
-2. **`moving` 状态下不要再次 `move_to`**。会打断当前移动，除非确实需要改变目的地。
+1. **Mọi thao tác đi qua `ask_env`**. Không được gọi trực tiếp hàm `move_to`, `get_person`.
+2. **Đang ở trạng thái `moving` không nên gọi lại `move_to`** trừ khi bạn thực sự muốn hủy điểm đến hiện tại để chuyển hướng khác.

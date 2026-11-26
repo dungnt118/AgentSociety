@@ -61,10 +61,15 @@ def get_env_router_actor_class(max_concurrency: int = 1) -> Any:
                 :class:`TraceProxy` 。为 ``None`` 时,env LLM 调用不被追踪。
             """
             from agentsociety2.env.router_codegen import CodeGenRouter
+            from agentsociety2.env.router_react import ReActRouter
             from agentsociety2.registry import get_registered_env_modules, get_registry
 
             if run_dir is not None:
-                custom_root = Path(run_dir)
+                custom_root = Path(run_dir).resolve()
+                while custom_root.parent != custom_root:
+                    if (custom_root / "custom").is_dir():
+                        break
+                    custom_root = custom_root.parent
                 if (custom_root / "custom").is_dir():
                     get_registry().set_workspace(custom_root)
 
@@ -74,12 +79,22 @@ def get_env_router_actor_class(max_concurrency: int = 1) -> Any:
                 env_class = env_type_map[module_type]
                 env_modules.append(env_class(**env_kwargs.get(module_type, {})))
 
-            self._router = CodeGenRouter(
-                env_modules=env_modules,
-                replay_writer=None,
-                llm_clients_spec=llm_clients_spec,
-                **(codegen_kwargs or {}),
-            )
+            router_opts = dict(codegen_kwargs or {})
+            router_type = str(router_opts.pop("router_type", "codegen") or "codegen").lower()
+            if router_type == "react":
+                self._router = ReActRouter(
+                    env_modules=env_modules,
+                    replay_writer=None,
+                    llm_clients_spec=llm_clients_spec,
+                    **router_opts,
+                )
+            else:
+                self._router = CodeGenRouter(
+                    env_modules=env_modules,
+                    replay_writer=None,
+                    llm_clients_spec=llm_clients_spec,
+                    **router_opts,
+                )
             if run_dir is not None:
                 self._router.run_dir = run_dir
                 # 模块状态只存在于本 actor 进程，故在此绑定各模块到

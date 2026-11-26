@@ -69,6 +69,15 @@ from agentsociety2.logger import get_logger
 
 T = TypeVar("T", bound=BaseModel)
 
+ACTIVE_CALLER_AGENT_ID: ContextVar[int | None] = ContextVar(
+    "agentsociety_active_caller_agent_id", default=None
+)
+
+
+def get_active_caller_agent_id() -> int | None:
+    """Return the bound caller agent_id from current async task when inside Router.ask()."""
+    return ACTIVE_CALLER_AGENT_ID.get()
+
 
 def _env_skill_catalog_row(skill_md: Path, *, module_name: str) -> str:
     """为环境提供的 skill 返回一行 Markdown 表格。"""
@@ -254,12 +263,25 @@ class RouterBase(ABC):
     def _set_trace_context(
         self, trace_id: str | None, parent_span_id: str | None, agent_id: Any
     ):
-        """绑定当前 ask() 的 trace 上下文(返回 reset token)。"""
-        return self._trace_ctx.set((trace_id, parent_span_id, agent_id))
+        """绑定当前 ask() 的 trace 上下文与调用者 agent_id（返回 reset token）。"""
+        trace_tok = self._trace_ctx.set((trace_id, parent_span_id, agent_id))
+        parsed_id: int | None = None
+        if agent_id is not None:
+            try:
+                parsed_id = int(agent_id)
+            except (TypeError, ValueError):
+                parsed_id = None
+        caller_tok = ACTIVE_CALLER_AGENT_ID.set(parsed_id)
+        return (trace_tok, caller_tok)
 
     def _reset_trace_context(self, token) -> None:
-        """把 trace 上下文重置回之前的值。"""
-        self._trace_ctx.reset(token)
+        """把 trace 上下文与 caller agent_id 重置回之前的值。"""
+        if isinstance(token, tuple) and len(token) == 2:
+            trace_tok, caller_tok = token
+            self._trace_ctx.reset(trace_tok)
+            ACTIVE_CALLER_AGENT_ID.reset(caller_tok)
+        else:
+            self._trace_ctx.reset(token)
 
     @contextmanager
     def _llm_completion_span(

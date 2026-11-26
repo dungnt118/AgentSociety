@@ -51,11 +51,13 @@ class ReactTurn:
     :param error: schema/解析错误文本;轮次干净时为 ``""`` 。
     :param assistant_message: 待追加的规范化 assistant 消息;provider 未
         返回任何可追加内容(无 choices / 无 content)时为 ``None`` 。
+    :param thought: 从本轮响应或工具参数提取的自然语言意图/思考文本(仅用于追踪,不回写消息线程)。
     """
 
     decisions: list[ReactDecision]
     error: str
     assistant_message: dict[str, Any] | None = None
+    thought: str = ""
 
 
 @dataclass(frozen=True)

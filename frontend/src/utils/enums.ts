@@ -4,8 +4,13 @@
 
 export enum LLMProviderType {
   OPENAI = 'openai',
+  GEMINI = 'gemini',
+  CLAUDE = 'claude',
   DEEPSEEK = 'deepseek',
+  XAI = 'xai',
   QWEN = 'qwen',
+  MISTRAL = 'mistral',
+  OPENAI_COMPATIBLE = 'openai_compatible',
   ZHIPUAI = 'zhipuai',
   SILICONFLOW = 'siliconflow',
   VLLM = 'vllm'

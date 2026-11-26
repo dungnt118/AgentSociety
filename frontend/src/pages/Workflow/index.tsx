@@ -638,6 +638,7 @@ const WorkflowList: React.FC = () => {
                 dataSource={filteredWorkflows}
                 rowKey="id"
                 loading={loading}
+                scroll={{ x: 'max-content' }}
                 pagination={{ pageSize: 10, size: 'small', showSizeChanger: false }}
             />
 

@@ -479,6 +479,7 @@ const AgentList: React.FC = () => {
                 dataSource={filteredAgents}
                 rowKey="id"
                 loading={loading}
+                scroll={{ x: 'max-content' }}
                 pagination={{ pageSize: 10, size: 'small', showSizeChanger: false }}
             />
 

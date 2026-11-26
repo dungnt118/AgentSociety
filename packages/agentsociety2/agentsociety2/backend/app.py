@@ -26,8 +26,10 @@ from agentsociety2.backend.routers import (
     custom,
     experiments,
     modules,
+    platform_compat,
     prefill_params,
     replay,
+    urban_sim,
 )
 
 # 加载环境变量
@@ -76,15 +78,30 @@ logger = get_logger()
 async def lifespan(app: FastAPI):
     """FastAPI 应用生命周期管理（启动/关闭钩子）。"""
     # 启动时执行
+    from agentsociety2.backend.path_security import _configured_workspace_root
+    from agentsociety2.backend.services.platform_resources import ensure_platform_seed
+    from agentsociety2.backend.services.urban_sim.competency import (
+        get_competency_audit_manager,
+    )
+    from agentsociety2.backend.services.urban_sim.db import init_urban_sim_db
+    from agentsociety2.backend.services.urban_sim.seed_mulberrylane import (
+        ensure_mulberrylane_seed,
+    )
     from agentsociety2.config import Config
 
     Config.validate_required()
+    init_urban_sim_db()
+    ensure_mulberrylane_seed()
+    ensure_platform_seed()
+    await urban_sim.get_lifecycle_manager().reconcile_on_startup()
+    get_competency_audit_manager().reconcile_on_startup(Path(_configured_workspace_root()))
     logger.info("AI Social Scientist Backend Service 启动中...")
     logger.info(f"项目根目录: {_project_root}")
 
     yield
 
     # 关闭时执行
+    await get_competency_audit_manager().shutdown_all()
     logger.info("AI Social Scientist Backend Service 关闭中...")
 
 
@@ -227,6 +244,8 @@ app.include_router(replay.router, prefix="/api/v1")
 app.include_router(custom.router)
 app.include_router(modules.router)
 app.include_router(agent_skills.router)
+app.include_router(urban_sim.router)
+app.include_router(platform_compat.router)
 
 
 @app.get("/")
@@ -243,6 +262,7 @@ async def root():
             "custom": "/api/v1/custom/*",
             "modules": "/api/v1/modules/*",
             "agent_skills": "/api/v1/agent-skills/*",
+            "urban_sim": "/api/v1/urban-sim/*",
         },
     }
 

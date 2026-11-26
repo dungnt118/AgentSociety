@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Table, Button, Card, Space, Modal, message, Tooltip, Input, Popconfirm, Form, Row, Col, Upload, Alert } from 'antd';
+import { Table, Button, Card, Space, Modal, message, Tooltip, Input, Popconfirm, Form, Row, Col, Upload, Alert, Tag } from 'antd';
 import {
+    ApartmentOutlined,
     PlusOutlined,
     EditOutlined,
     DeleteOutlined,
@@ -14,11 +15,13 @@ import { fetchCustom, postDownloadCustom, WITH_AUTH } from '../../components/fet
 import dayjs from 'dayjs';
 import { getAccessToken } from '../../components/authState';
 import { useTranslation } from 'react-i18next';
+import { useNavigate } from 'react-router';
 
 const { Dragger } = Upload;
 
 const Map: React.FC = () => {
     const { t } = useTranslation();
+    const navigate = useNavigate();
     const [maps, setMaps] = useState<ConfigWrapper<MapConfig>[]>([]);
     const [loading, setLoading] = useState(false);
     const [searchText, setSearchText] = useState('');
@@ -177,9 +180,9 @@ const Map: React.FC = () => {
             Authorization: `Bearer ${getAccessToken()}`
         } : {},
         beforeUpload: (file) => {
-            // check suffix
-            if (!file.name.endsWith('.pb')) {
-                message.error(t('map.messages.invalidFileType'));
+            const lower = file.name.toLowerCase();
+            if (!['.pb', '.png', '.jpg', '.jpeg', '.webp'].some((ext) => lower.endsWith(ext))) {
+                message.error("Chỉ hỗ trợ bản đồ .pb hoặc ảnh mặt bằng 2D (.png, .jpg, .webp)");
                 return false;
             }
             return true;
@@ -200,6 +203,14 @@ const Map: React.FC = () => {
             title: t('common.name'),
             dataIndex: 'name',
             key: 'name',
+            render: (text: string, record: ConfigWrapper<MapConfig & { map_type?: string }>) => (
+                <Space size={6} wrap>
+                    <span>{text}</span>
+                    {record.config?.map_type === 'urban_zones' && <Tag color="blue">Zone Topology v2</Tag>}
+                    {record.config?.map_type === 'image_2d' && <Tag color="green">Sơ đồ 2D</Tag>}
+                    {record.config?.map_type === 'protobuf' && <Tag>Protobuf (.pb)</Tag>}
+                </Space>
+            ),
         },
         {
             title: t('common.description'),
@@ -225,8 +236,17 @@ const Map: React.FC = () => {
                             </Tooltip>
                         )
                     }
-                    <Tooltip title={t('common.view')}>
-                        <Button icon={<EyeOutlined />} size="small" onClick={async () => {
+                    {(record.config as (MapConfig & { linked_project_id?: string }))?.linked_project_id ? (
+                        <Tooltip title="Mở Zone Map trong Mô phỏng Khu đô thị">
+                            <Button
+                                icon={<ApartmentOutlined />}
+                                size="small"
+                                onClick={() => navigate('/urban-sim')}
+                            />
+                        </Tooltip>
+                    ) : (
+                        <Tooltip title={t('common.view')}>
+                            <Button icon={<EyeOutlined />} size="small" onClick={async () => {
                             // get token
                             const url = `/api/map-configs/${record.id}/temp-link`
                             try {
@@ -253,7 +273,8 @@ const Map: React.FC = () => {
                                 console.error(error);
                             }
                         }} />
-                    </Tooltip>
+                        </Tooltip>
+                    )}
                     <Tooltip title={t('common.export')}>
                         <Button icon={<DownloadOutlined />} size="small" onClick={() => {
                             postDownloadCustom(`/api/map-configs/${record.id}/export`)
@@ -295,6 +316,7 @@ const Map: React.FC = () => {
                 dataSource={filteredMaps}
                 rowKey="id"
                 loading={loading}
+                scroll={{ x: 'max-content' }}
                 pagination={{ pageSize: 10 }}
             />
 
