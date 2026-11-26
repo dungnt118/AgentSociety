@@ -20,6 +20,7 @@ export default {
         bill: 'Thanh toán',
         profiles: 'Hồ sơ',
         skills: 'Kỹ năng cư dân',
+        systemBackup: 'Sao lưu & Khôi phục',
     },
     common: {
         name: "Tên",

@@ -29,6 +29,7 @@ from agentsociety2.backend.routers import (
     platform_compat,
     prefill_params,
     replay,
+    system_backup,
     urban_sim,
 )
 
@@ -246,6 +247,7 @@ app.include_router(modules.router)
 app.include_router(agent_skills.router)
 app.include_router(urban_sim.router)
 app.include_router(platform_compat.router)
+app.include_router(system_backup.router)
 
 
 @app.get("/")
@@ -263,6 +265,7 @@ async def root():
             "modules": "/api/v1/modules/*",
             "agent_skills": "/api/v1/agent-skills/*",
             "urban_sim": "/api/v1/urban-sim/*",
+            "system_backup": "/api/v1/system-backup/*",
         },
     }
 

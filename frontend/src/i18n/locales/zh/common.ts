@@ -20,6 +20,7 @@ export default {
         bill: '账单',
         profiles: '智能体画像',
         skills: 'Agent Skills',
+        systemBackup: '备份与恢复',
     },
     common: {
         name: "名称",

@@ -159,6 +159,77 @@ const STREAM_TAG_COLORS: Record<string, string> = {
     INCIDENT: "volcano",
 };
 
+interface DayNightVisualTheme {
+    cardBackground: string;
+    cardBorder: string;
+    primaryText: string;
+    secondaryText: string;
+    pillBackground: string;
+    pillText: string;
+    pillBorder: string;
+    progressStroke: string;
+    progressTrail: string;
+}
+
+function getDayNightVisualTheme(
+    isDaytime: boolean,
+    timeBand?: string | null
+): DayNightVisualTheme {
+    if (!isDaytime) {
+        return {
+            cardBackground: "linear-gradient(135deg, #0f172a 0%, #1e1b4b 55%, #312e81 100%)",
+            cardBorder: "1px solid #4338ca",
+            primaryText: "#f8fafc",
+            secondaryText: "#cbd5e1",
+            pillBackground: "linear-gradient(90deg, #1e1b4b 0%, #3730a3 100%)",
+            pillText: "#eef2ff",
+            pillBorder: "1px solid #6366f1",
+            progressStroke: "#a5b4fc",
+            progressTrail: "rgba(255, 255, 255, 0.2)",
+        };
+    }
+    if (timeBand === "EVENING_RUSH") {
+        // Chiều tối / Hoàng hôn (17:00 - 17:59)
+        return {
+            cardBackground: "linear-gradient(135deg, #fff1f2 0%, #fed7aa 55%, #fdba74 100%)",
+            cardBorder: "1px solid #fb923c",
+            primaryText: "#7c2d12",
+            secondaryText: "#9a3412",
+            pillBackground: "linear-gradient(90deg, #f97316 0%, #fb923c 100%)",
+            pillText: "#ffffff",
+            pillBorder: "1px solid #ea580c",
+            progressStroke: "#ea580c",
+            progressTrail: "rgba(124, 45, 18, 0.14)",
+        };
+    }
+    if (timeBand === "NOON_REST" || timeBand === "AFTERNOON_OPS") {
+        // Trưa / Chiều nắng ấm + trời xanh dịu
+        return {
+            cardBackground: "linear-gradient(135deg, #fffbeb 0%, #fef3c7 52%, #e0f2fe 100%)",
+            cardBorder: "1px solid #f59e0b",
+            primaryText: "#78350f",
+            secondaryText: "#92400e",
+            pillBackground: "linear-gradient(90deg, #f59e0b 0%, #fbbf24 100%)",
+            pillText: "#451a03",
+            pillBorder: "1px solid #d97706",
+            progressStroke: "#d97706",
+            progressTrail: "rgba(120, 53, 15, 0.14)",
+        };
+    }
+    // Buổi sáng
+    return {
+        cardBackground: "linear-gradient(135deg, #fefce8 0%, #fef3c7 55%, #fde68a 100%)",
+        cardBorder: "1px solid #f59e0b",
+        primaryText: "#78350f",
+        secondaryText: "#92400e",
+        pillBackground: "linear-gradient(90deg, #fbbf24 0%, #f59e0b 100%)",
+        pillText: "#451a03",
+        pillBorder: "1px solid #d97706",
+        progressStroke: "#d97706",
+        progressTrail: "rgba(120, 53, 15, 0.14)",
+    };
+}
+
 export default function RunMonitorPage() {
     const { projectId = "", runId = "" } = useParams();
     const navigate = useNavigate();
@@ -433,6 +504,10 @@ export default function RunMonitorPage() {
             : null;
     const isDaytime = sim_clock?.is_daytime ?? true;
     const dayNightLabel = sim_clock?.day_night_label_vi || (isDaytime ? "Ban ngày" : "Ban đêm");
+    const dayIndex = Math.max(1, sim_clock?.day_index ?? 1);
+    const totalSimDays = Math.max(1, sim_clock?.total_sim_days ?? 1);
+    const dayLabel = totalSimDays > 1 ? `Ngày ${dayIndex}/${totalSimDays}` : `Ngày thứ ${dayIndex}`;
+    const clockTheme = getDayNightVisualTheme(isDaytime, sim_clock?.time_band);
 
     const openLightbox = (filename: string, caption: string) => {
         setLightboxSrc(getScreenshotUrl(projectId, runId, filename));
@@ -717,18 +792,14 @@ export default function RunMonitorPage() {
                                 {currentSimParsed && (
                                     <Tag
                                         icon={isDaytime ? <SunOutlined /> : <MoonOutlined />}
-                                        color={isDaytime ? "gold" : "geekblue"}
-                                        style={
-                                            isDaytime
-                                                ? undefined
-                                                : {
-                                                      background: "#eef2ff",
-                                                      color: "#312e81",
-                                                      borderColor: "#c7d2fe",
-                                                  }
-                                        }
+                                        style={{
+                                            background: clockTheme.pillBackground,
+                                            color: clockTheme.pillText,
+                                            border: clockTheme.pillBorder,
+                                            fontWeight: 600,
+                                        }}
                                     >
-                                        {currentSimParsed.full} · {dayNightLabel}
+                                        {dayLabel} · {currentSimParsed.full} · {dayNightLabel}
                                         {sim_clock?.time_band_label_vi ? ` · ${sim_clock.time_band_label_vi}` : ""}
                                     </Tag>
                                 )}
@@ -806,38 +877,55 @@ export default function RunMonitorPage() {
 
                 <Row gutter={[12, 12]}>
                     <Col xs={24} sm={12} md={8} lg={5}>
-                        <Card size="small">
+                        <Card
+                            size="small"
+                            style={{
+                                background: clockTheme.cardBackground,
+                                border: clockTheme.cardBorder,
+                            }}
+                        >
                             <Space style={{ width: "100%", justifyContent: "space-between" }} size={4}>
-                                <Text type="secondary">
-                                    <ClockCircleOutlined /> Thời gian & Tiến độ
+                                <Text style={{ color: clockTheme.secondaryText, fontWeight: 600, fontSize: 12 }}>
+                                    <ClockCircleOutlined /> {dayLabel}
                                 </Text>
                                 {currentSimParsed && (
                                     <Tag
                                         icon={isDaytime ? <SunOutlined /> : <MoonOutlined />}
-                                        color={isDaytime ? "gold" : "geekblue"}
-                                        style={{ marginInlineEnd: 0, fontSize: 11 }}
+                                        style={{
+                                            marginInlineEnd: 0,
+                                            fontSize: 11,
+                                            fontWeight: 600,
+                                            background: clockTheme.pillBackground,
+                                            color: clockTheme.pillText,
+                                            border: clockTheme.pillBorder,
+                                        }}
                                     >
                                         {dayNightLabel}
                                     </Tag>
                                 )}
                             </Space>
                             <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginTop: 2, flexWrap: "wrap" }}>
-                                <span style={{ fontSize: 20, fontWeight: 700 }}>
+                                <span style={{ fontSize: 20, fontWeight: 700, color: clockTheme.primaryText }}>
                                     {currentSimParsed ? currentSimParsed.time : `${run.step_count} / ${run.total_steps}`}
                                 </span>
                                 {currentSimParsed && (
-                                    <Text type="secondary" style={{ fontSize: 12 }}>
+                                    <Text style={{ fontSize: 12, color: clockTheme.secondaryText }}>
                                         {currentSimParsed.date}
-                                        {(sim_clock?.day_index ?? 1) > 1 ? ` (Ngày ${sim_clock?.day_index})` : ""}
                                     </Text>
                                 )}
                             </div>
                             <Progress
                                 size="small"
+                                strokeColor={clockTheme.progressStroke}
+                                railColor={clockTheme.progressTrail}
                                 percent={run.total_steps > 0 ? Math.round((run.step_count / run.total_steps) * 100) : 0}
-                                format={() => `B${run.step_count}/${run.total_steps}`}
+                                format={() => (
+                                    <span style={{ color: clockTheme.primaryText, fontSize: 11, fontWeight: 600 }}>
+                                        B{run.step_count}/{run.total_steps}
+                                    </span>
+                                )}
                             />
-                            <Text type="secondary" style={{ fontSize: 11, display: "block" }}>
+                            <Text style={{ fontSize: 11, display: "block", color: clockTheme.secondaryText }}>
                                 {sim_clock?.time_band_label_vi || "Đang khởi tạo"}
                                 {simWindowRange ? ` · ${simWindowRange}` : ""}
                                 {tickLabel ? ` (${tickLabel})` : ""}

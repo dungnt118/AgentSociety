@@ -20,6 +20,7 @@ export default {
         bill: 'Billing',
         profiles: 'Profiles',
         skills: 'Agent Skills',
+        systemBackup: 'Backup & Restore',
     },
     common: {
         name: "Name",

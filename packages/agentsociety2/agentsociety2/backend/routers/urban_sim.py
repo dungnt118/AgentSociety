@@ -1289,9 +1289,15 @@ def _extract_run_sim_clock(
     if start_dt is not None and int(run.total_steps or 0) > 0:
         end_raw = (start_dt + timedelta(seconds=int(run.total_steps) * tick_seconds)).isoformat()
 
-    day_index = 1
+    elapsed_seconds = max(0, int(run.step_count or 0) * tick_seconds)
     if start_dt is not None and current_dt is not None:
-        day_index = max(1, (current_dt.date() - start_dt.date()).days + 1)
+        elapsed_seconds = max(0, int(round((current_dt - start_dt).total_seconds())))
+    day_index = (elapsed_seconds // 86400) + 1
+    total_sim_days = (
+        max(1, ((int(run.total_steps) * tick_seconds - 1) // 86400) + 1)
+        if int(run.total_steps or 0) > 0
+        else 1
+    )
 
     period_info = (
         _classify_sim_time_period(current_dt)
@@ -1310,7 +1316,9 @@ def _extract_run_sim_clock(
         "start_sim_time": start_dt.isoformat() if start_dt is not None else start_raw,
         "end_sim_time": end_raw,
         "tick_seconds": tick_seconds,
+        "elapsed_seconds": elapsed_seconds,
         "day_index": day_index,
+        "total_sim_days": total_sim_days,
         **period_info,
     }
 

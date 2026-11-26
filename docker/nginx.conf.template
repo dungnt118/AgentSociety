@@ -1,6 +1,7 @@
 server {
     listen 5173;
     server_name _;
+    client_max_body_size 128m;
 
     root /usr/share/nginx/html;
     index index.html;
@@ -25,6 +26,7 @@ server {
 server {
     listen 8001;
     server_name _;
+    client_max_body_size 128m;
 
     location / {
         proxy_pass http://backend:8001;

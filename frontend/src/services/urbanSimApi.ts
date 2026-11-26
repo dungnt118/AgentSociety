@@ -202,12 +202,14 @@ export interface SimClockInfo {
     start_sim_time: string | null;
     end_sim_time: string | null;
     tick_seconds: number;
+    elapsed_seconds?: number;
     time_band: string | null;
     time_band_label_vi: string | null;
     period_vi: string | null;
     is_daytime: boolean | null;
     day_night_label_vi: string | null;
     day_index: number;
+    total_sim_days?: number;
 }
 
 export interface AgentStatusRow {

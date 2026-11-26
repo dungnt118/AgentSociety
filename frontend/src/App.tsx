@@ -30,6 +30,7 @@ const UrbanSimConsolePage = lazy(() => import('./pages/UrbanSim'))
 const UrbanSimPersonaMatrixPage = lazy(() => import('./pages/UrbanSim/PersonaMatrixPage'))
 const UrbanSimAtlasConfigPage = lazy(() => import('./pages/UrbanSim/AtlasConfigPage'))
 const UrbanSimRunMonitorPage = lazy(() => import('./pages/UrbanSim/RunMonitorPage'))
+const SystemBackupPage = lazy(() => import('./pages/SystemBackup'))
 
 const routeFallback = (
     <div style={{ display: 'flex', justifyContent: 'center', padding: 48 }}>
@@ -202,6 +203,14 @@ const router = createBrowserRouter([
         element: (
             authProvider(
                 <RootLayout selectedKey='/urban-sim'>{withSuspense(<UrbanSimRunMonitorPage />)}</RootLayout>
+            )
+        ),
+    },
+    {
+        path: "/system-backup",
+        element: (
+            authProvider(
+                <RootLayout selectedKey='/system-backup'>{withSuspense(<SystemBackupPage />)}</RootLayout>
             )
         ),
     },

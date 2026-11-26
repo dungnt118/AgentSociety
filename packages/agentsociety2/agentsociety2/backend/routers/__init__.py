@@ -8,6 +8,7 @@ from . import (
     platform_compat,
     prefill_params,
     replay,
+    system_backup,
     urban_sim,
 )
 
@@ -19,5 +20,6 @@ __all__ = [
     "platform_compat",
     "prefill_params",
     "replay",
+    "system_backup",
     "urban_sim",
 ]

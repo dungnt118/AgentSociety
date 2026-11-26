@@ -2,6 +2,7 @@ import {
     ApartmentOutlined,
     ApiOutlined,
     BookOutlined,
+    CloudSyncOutlined,
     ExperimentOutlined,
     FormOutlined,
     GithubOutlined,
@@ -131,6 +132,11 @@ const RootMenu = ({ selectedKey, style }: {
             key: "/survey",
             label: <Link to="/survey">{t('menu.survey')}</Link>,
             icon: <FormOutlined />,
+        },
+        {
+            key: "/system-backup",
+            label: <Link to="/system-backup">{t('menu.systemBackup')}</Link>,
+            icon: <CloudSyncOutlined />,
         },
         ...(WITH_AUTH ? [{ key: "/bill", label: <Link to="/bill">{t('menu.bill')}</Link> }] : []),
     ];

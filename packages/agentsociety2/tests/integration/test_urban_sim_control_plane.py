@@ -3043,12 +3043,12 @@ def test_monitor_state_sim_clock_day_night_and_agent_activity_summary(tmp_path: 
         assert ag12["incidents_open_count"] == 1
         assert ag12["last_action"] == "report_resident_incident"
 
-        # Case 3: Nighttime simulation clock
+        # Case 3: Nighttime simulation clock + multi-day elapsed ticks (day_index == 2)
         (run_dir / SOCIETY_STEP_JSON).write_text(
             json.dumps(
                 {
-                    "current_time": "2026-06-15T21:30:00+07:00",
-                    "step_count": 10,
+                    "current_time": "2026-06-16T21:30:00+07:00",
+                    "step_count": 150,
                     "completed_step_count": 0,
                     "terminated": False,
                     "pending_update": None,
@@ -3063,6 +3063,8 @@ def test_monitor_state_sim_clock_day_night_and_agent_activity_summary(tmp_path: 
         assert d2["sim_clock"]["time_band"] == "QUIET_NIGHT"
         assert d2["sim_clock"]["day_night_label_vi"] == "Ban đêm"
         assert d2["sim_clock"]["period_vi"] == "Đêm"
+        assert d2["sim_clock"]["day_index"] == 2
+        assert d2["sim_clock"]["elapsed_seconds"] >= 86400
 
 
 
