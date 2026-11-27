@@ -8,7 +8,7 @@ export default defineConfig({
     workers: 1,
     retries: 0,
     use: {
-        baseURL: 'http://127.0.0.1:4173',
+        baseURL: process.env.E2E_LIVE_BASE_URL || 'http://127.0.0.1:4173',
         locale: 'en-US',
         trace: 'retain-on-failure',
         launchOptions: {
@@ -16,9 +16,11 @@ export default defineConfig({
             args: ['--enable-unsafe-swiftshader'],
         },
     },
-    webServer: {
-        command: 'npm run preview -- --host 127.0.0.1 --port 4173 --strictPort',
-        url: 'http://127.0.0.1:4173',
-        reuseExistingServer: false,
-    },
+    webServer: process.env.E2E_LIVE_BASE_URL
+        ? undefined
+        : {
+              command: 'npm run preview -- --host 127.0.0.1 --port 4173 --strictPort',
+              url: 'http://127.0.0.1:4173',
+              reuseExistingServer: false,
+          },
 });

@@ -230,6 +230,8 @@ def _friendly_env_tool_label(action: str, obs_preview: str, args: Any = None) ->
         return "Gửi tin nhắn nội bộ / phản hồi"
     if "manage_incident" in obs_preview or "update_incident_status" in obs_preview:
         return "Cập nhật trạng thái sự vụ"
+    if "move_to_checkpoint" in obs_preview:
+        return "Di chuyển tới Chốt/Địa điểm trên Bản đồ Số"
     if "move_to_zone" in obs_preview:
         return "Di chuyển khu vực"
     if "login_qltn_portal" in obs_preview and '"already_logged_in": true' not in obs_preview.lower():

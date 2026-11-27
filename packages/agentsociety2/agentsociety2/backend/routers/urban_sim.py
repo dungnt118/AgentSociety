@@ -3,8 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
+import math
+import os
 import re
+import uuid
+from collections import deque
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal
@@ -18,6 +23,7 @@ from sqlmodel import Session, select
 
 from agentsociety2.backend.path_security import (
     _configured_workspace_root,
+    resolve_under_root,
     resolve_urban_sim_map_image,
     resolve_urban_sim_run_dir,
     resolve_urban_sim_screenshot,
@@ -37,22 +43,42 @@ from agentsociety2.backend.services.urban_sim.crypto import (
 )
 from agentsociety2.backend.services.urban_sim.db import (
     UrbanSimAtlasConfig,
+    UrbanSimCheckpoint,
     UrbanSimPersona,
     UrbanSimProject,
     UrbanSimRun,
     UrbanSimZone,
     get_engine,
     init_urban_sim_db,
+    resolve_default_persona_icon,
 )
 from agentsociety2.backend.services.urban_sim.lifecycle import (
     UrbanSimLifecycleManager,
     compute_run_cost,
     derive_execution_phase,
 )
+from agentsociety2.backend.services.urban_sim.map_generator import (
+    MAX_CHECKPOINT_MD_CHARS,
+    MAX_PROMPT_CHARS,
+    build_digital_map_geojson,
+    find_containing_zone_key,
+    generate_checkpoints_draft,
+    generate_digital_map_draft,
+    generate_zone_from_point_draft,
+    normalize_map_key,
+    parse_image_dimensions,
+    parse_polygon_json,
+    project_has_digital_map,
+    recompute_checkpoint_zones,
+    validate_and_normalize_polygon,
+)
 from agentsociety2.backend.services.urban_sim.seed_mulberrylane import (
     ACCOUNTING_PERSONA_TEMPLATE,
+    MULBERRYLANE_CHECKPOINTS,
+    MULBERRYLANE_MAP_PROMPT,
     MULBERRYLANE_PERSONAS,
     MULBERRYLANE_SCENARIO_BRIEF,
+    MULBERRYLANE_ZONE_GEOMETRIES,
     MULBERRYLANE_ZONES,
     ensure_mulberrylane_seed,
 )
@@ -123,8 +149,20 @@ def _detect_raster_magic(data: bytes) -> tuple[str, str]:
     )
 
 
+def _parse_json_dict(raw: str | None) -> dict[str, Any]:
+    if not raw:
+        return {}
+    try:
+        parsed = json.loads(raw)
+        return parsed if isinstance(parsed, dict) else {}
+    except (ValueError, TypeError):
+        return {}
+
+
 def _serialize_persona(p: UrbanSimPersona) -> dict[str, Any]:
     has_pw = bool(p.login_password_enc and p.login_password_enc.strip())
+    raw_activated = getattr(p, "default_activated_skill_ids_json", None)
+    raw_disabled = getattr(p, "disabled_skill_ids_json", None)
     return {
         "id": p.id,
         "project_id": p.project_id,
@@ -138,8 +176,21 @@ def _serialize_persona(p: UrbanSimPersona) -> dict[str, Any]:
         "is_pilot_member": bool(p.is_pilot_member),
         "is_active": bool(p.is_active),
         "home_zone": p.home_zone,
+        "avatar_icon": (getattr(p, "avatar_icon", None) or "").strip()
+        or resolve_default_persona_icon(p.role_code, p.group_type, p.full_name),
         "domain_knowledge_prompt": p.domain_knowledge_prompt,
         "initial_tasks": [str(x) for x in _parse_json_list(p.initial_tasks_json)],
+        "default_activated_skill_ids": (
+            [str(x) for x in _parse_json_list(raw_activated)]
+            if raw_activated is not None
+            else None
+        ),
+        "disabled_skill_ids": (
+            [str(x) for x in _parse_json_list(raw_disabled)]
+            if raw_disabled is not None
+            else None
+        ),
+        "profile_traits": _parse_json_dict(getattr(p, "profile_traits_json", None)),
         "portal_url": p.portal_url,
         "login_username": p.login_username,
         "has_password": has_pw,
@@ -230,6 +281,13 @@ def _serialize_project_summary(
     zones = session.exec(
         select(UrbanSimZone).where(UrbanSimZone.project_id == project.id)
     ).all()
+    checkpoints = session.exec(
+        select(UrbanSimCheckpoint).where(UrbanSimCheckpoint.project_id == project.id)
+    ).all()
+    has_digital_map = bool(project.zone_map_image_rel) or any(
+        (parse_polygon_json(getattr(z, "polygon_points_json", None)) is not None)
+        for z in zones
+    )
     atlas = session.get(UrbanSimAtlasConfig, project.id)
     latest_run = session.exec(
         select(UrbanSimRun)
@@ -259,6 +317,13 @@ def _serialize_project_summary(
         "pilot_mode": bool(project.pilot_mode),
         "zone_map_image_rel": project.zone_map_image_rel,
         "has_zone_map_image": bool(project.zone_map_image_rel),
+        "has_digital_map": has_digital_map,
+        "map_prompt": getattr(project, "map_prompt", None) or "",
+        "map_width": getattr(project, "map_width", None),
+        "map_height": getattr(project, "map_height", None),
+        "map_aspect_ratio": getattr(project, "map_aspect_ratio", None) or 1.6,
+        "map_image_version": int(getattr(project, "map_image_version", 0) or 0),
+        "map_image_updated_at": getattr(project, "map_image_updated_at", None),
         "llm_config_id": project.llm_config_id,
         "enable_sociological_debrief": bool(getattr(project, "enable_sociological_debrief", True)),
         "enable_competency_prepost_quiz": bool(getattr(project, "enable_competency_prepost_quiz", False)),
@@ -271,6 +336,7 @@ def _serialize_project_summary(
             "resident_count": len(residents),
             "bql_credentials_configured": len(configured_bql),
             "zones_count": len(zones),
+            "checkpoints_count": len(checkpoints),
             "atlas_key_configured": bool(atlas and (atlas.atlas_api_key_enc or "").strip()),
             "atlas_verified_at": atlas.last_verified_at if atlas else None,
         },
@@ -337,8 +403,12 @@ class PersonaCreateRequest(BaseModel):
     is_pilot_member: bool = False
     is_active: bool = True
     home_zone: str = "LOBBY_MAIN"
+    avatar_icon: str | None = Field(None, max_length=16)
     domain_knowledge_prompt: str = ""
     initial_tasks: list[str] = Field(default_factory=list)
+    default_activated_skill_ids: list[str] | None = None
+    disabled_skill_ids: list[str] | None = None
+    profile_traits: dict[str, Any] | None = None
     portal_url: str | None = None
     login_username: str | None = None
     login_password: str | None = None
@@ -354,12 +424,21 @@ class PersonaUpdateRequest(BaseModel):
     is_pilot_member: bool | None = None
     is_active: bool | None = None
     home_zone: str | None = None
+    avatar_icon: str | None = Field(None, max_length=16)
     domain_knowledge_prompt: str | None = None
     initial_tasks: list[str] | None = None
+    default_activated_skill_ids: list[str] | None = None
+    disabled_skill_ids: list[str] | None = None
+    profile_traits: dict[str, Any] | None = None
     portal_url: str | None = None
     login_username: str | None = None
     login_password: str | None = None
     clear_password: bool = False
+
+
+class ZoneAssignPersonasRequest(BaseModel):
+    persona_ids: list[str] = Field(default_factory=list, max_length=200)
+    fallback_zone_key: str | None = None
 
 
 class AtlasConfigUpdateRequest(BaseModel):
@@ -382,12 +461,200 @@ class AtlasTestConnectionRequest(BaseModel):
     atlas_api_key: str | None = None
 
 
+ZoneTypeLiteral = Literal[
+    "LOBBY",
+    "OFFICE",
+    "TECHNICAL",
+    "SECURITY",
+    "TOWER",
+    "UTILITY",
+    "PARKING",
+    "COMMERCIAL",
+    "OTHER",
+]
+
+
 class ZoneCreateRequest(BaseModel):
     zone_key: str = Field(..., min_length=2, max_length=64)
     name: str = Field(..., min_length=2, max_length=160)
-    zone_type: Literal["LOBBY", "OFFICE", "TECHNICAL", "SECURITY", "TOWER"] = "OFFICE"
-    description: str = ""
+    zone_type: ZoneTypeLiteral = "OFFICE"
+    description: str = Field("", max_length=500)
+    ambient_signals: str = Field("", max_length=2000)
     sort_order: int = 99
+    center_x_pct: float | None = Field(None, ge=0.0, le=100.0, allow_inf_nan=False)
+    center_y_pct: float | None = Field(None, ge=0.0, le=100.0, allow_inf_nan=False)
+    polygon_points: list[list[float]] | None = None
+    fill_color: str | None = Field(None, max_length=32)
+
+
+class ZoneUpdateRequest(BaseModel):
+    zone_key: str | None = Field(None, min_length=2, max_length=64)
+    name: str | None = Field(None, min_length=2, max_length=160)
+    zone_type: ZoneTypeLiteral | None = None
+    description: str | None = Field(None, max_length=500)
+    ambient_signals: str | None = Field(None, max_length=2000)
+    sort_order: int | None = None
+    center_x_pct: float | None = Field(None, ge=0.0, le=100.0, allow_inf_nan=False)
+    center_y_pct: float | None = Field(None, ge=0.0, le=100.0, allow_inf_nan=False)
+    polygon_points: list[list[float]] | None = None
+    fill_color: str | None = Field(None, max_length=32)
+
+
+class ZoneLayoutItem(BaseModel):
+    id: str = Field(..., min_length=1)
+    polygon_points: list[list[float]] | None = None
+    center_x_pct: float | None = Field(None, ge=0.0, le=100.0, allow_inf_nan=False)
+    center_y_pct: float | None = Field(None, ge=0.0, le=100.0, allow_inf_nan=False)
+    fill_color: str | None = Field(None, max_length=32)
+
+
+class ZonesLayoutRequest(BaseModel):
+    zones: list[ZoneLayoutItem] = Field(..., max_length=100)
+
+
+class DigitalMapMetaPatchRequest(BaseModel):
+    map_prompt: str | None = Field(None, max_length=MAX_PROMPT_CHARS)
+    map_aspect_ratio: float | None = Field(None, ge=0.4, le=3.5, allow_inf_nan=False)
+
+
+class DigitalMapGenerateRequest(BaseModel):
+    map_prompt: str = Field(..., min_length=5, max_length=MAX_PROMPT_CHARS)
+    use_image: bool = True
+    max_zones: int = Field(12, ge=1, le=25)
+
+
+class DigitalMapApplyZoneItem(BaseModel):
+    zone_key: str = Field(..., min_length=1, max_length=64)
+    name: str = Field(..., min_length=1, max_length=160)
+    zone_type: ZoneTypeLiteral = "OTHER"
+    description: str = Field("", max_length=500)
+    ambient_signals: str = Field("", max_length=2000)
+    fill_color: str | None = Field(None, max_length=32)
+    polygon_points: list[list[float]] = Field(..., min_length=3, max_length=64)
+    sort_order: int = 1
+
+
+class DigitalMapApplyRequest(BaseModel):
+    mode: Literal["MERGE", "REPLACE"] = "MERGE"
+    map_prompt: str | None = Field(None, max_length=MAX_PROMPT_CHARS)
+    aspect_ratio: float | None = Field(None, ge=0.4, le=3.5, allow_inf_nan=False)
+    zones: list[DigitalMapApplyZoneItem] = Field(..., min_length=1, max_length=40)
+
+
+class ZoneFromPointRequest(BaseModel):
+    center_x_pct: float = Field(..., ge=0.0, le=100.0, allow_inf_nan=False)
+    center_y_pct: float = Field(..., ge=0.0, le=100.0, allow_inf_nan=False)
+    prompt: str = Field(..., min_length=5, max_length=MAX_PROMPT_CHARS)
+
+
+CheckpointCategoryLiteral = Literal["security", "facility", "amenity", "service", "general"]
+
+
+class CheckpointCreateRequest(BaseModel):
+    checkpoint_key: str | None = Field(None, min_length=2, max_length=64)
+    name: str = Field(..., min_length=1, max_length=160)
+    x_pct: float = Field(..., ge=0.0, le=100.0, allow_inf_nan=False)
+    y_pct: float = Field(..., ge=0.0, le=100.0, allow_inf_nan=False)
+    icon_emoji: str = Field("📍", min_length=1, max_length=16)
+    description_md: str = Field("", max_length=MAX_CHECKPOINT_MD_CHARS)
+    category: CheckpointCategoryLiteral = "general"
+    sort_order: int = 99
+
+
+class CheckpointUpdateRequest(BaseModel):
+    checkpoint_key: str | None = Field(None, min_length=2, max_length=64)
+    name: str | None = Field(None, min_length=1, max_length=160)
+    x_pct: float | None = Field(None, ge=0.0, le=100.0, allow_inf_nan=False)
+    y_pct: float | None = Field(None, ge=0.0, le=100.0, allow_inf_nan=False)
+    icon_emoji: str | None = Field(None, min_length=1, max_length=16)
+    description_md: str | None = Field(None, max_length=MAX_CHECKPOINT_MD_CHARS)
+    category: CheckpointCategoryLiteral | None = None
+    sort_order: int | None = None
+
+
+class CheckpointLayoutItem(BaseModel):
+    id: str = Field(..., min_length=1)
+    x_pct: float = Field(..., ge=0.0, le=100.0, allow_inf_nan=False)
+    y_pct: float = Field(..., ge=0.0, le=100.0, allow_inf_nan=False)
+
+
+class CheckpointsLayoutRequest(BaseModel):
+    checkpoints: list[CheckpointLayoutItem] = Field(..., max_length=150)
+
+
+class CheckpointsGenerateRequest(BaseModel):
+    prompt: str = Field(..., min_length=5, max_length=MAX_PROMPT_CHARS)
+    max_checkpoints: int = Field(20, ge=1, le=50)
+
+
+class CheckpointApplyItem(BaseModel):
+    checkpoint_key: str = Field(..., min_length=2, max_length=64)
+    name: str = Field(..., min_length=1, max_length=160)
+    x_pct: float = Field(..., ge=0.0, le=100.0, allow_inf_nan=False)
+    y_pct: float = Field(..., ge=0.0, le=100.0, allow_inf_nan=False)
+    icon_emoji: str = Field("📍", min_length=1, max_length=16)
+    description_md: str = Field("", max_length=MAX_CHECKPOINT_MD_CHARS)
+    category: CheckpointCategoryLiteral = "general"
+    sort_order: int = 99
+
+
+class CheckpointsApplyBatchRequest(BaseModel):
+    checkpoints: list[CheckpointApplyItem] = Field(..., min_length=1, max_length=50)
+
+
+def _normalize_zone_key(raw: str) -> str:
+    clean = re.sub(r"[^A-Za-z0-9_]+", "_", (raw or "").strip().upper()).strip("_")
+    if len(clean) < 2:
+        raise HTTPException(
+            status_code=400,
+            detail="Mã khu vực (zone_key) phải chứa ít nhất 2 ký tự chữ/số (A-Z, 0-9, _).",
+        )
+    return clean[:64]
+
+
+def _serialize_zone(z: UrbanSimZone, persona_count: int = 0) -> dict[str, Any]:
+    return {
+        "id": z.id,
+        "project_id": z.project_id,
+        "zone_key": z.zone_key,
+        "name": z.name,
+        "zone_type": z.zone_type,
+        "description": z.description,
+        "ambient_signals": getattr(z, "ambient_signals", "") or "",
+        "sort_order": int(z.sort_order),
+        "persona_count": int(persona_count),
+        "center_x_pct": getattr(z, "center_x_pct", None),
+        "center_y_pct": getattr(z, "center_y_pct", None),
+        "polygon_points": parse_polygon_json(getattr(z, "polygon_points_json", None)),
+        "fill_color": getattr(z, "fill_color", None),
+    }
+
+
+def _serialize_checkpoint(cp: UrbanSimCheckpoint) -> dict[str, Any]:
+    return {
+        "id": cp.id,
+        "project_id": cp.project_id,
+        "checkpoint_key": cp.checkpoint_key,
+        "name": cp.name,
+        "x_pct": round(float(cp.x_pct), 2),
+        "y_pct": round(float(cp.y_pct), 2),
+        "icon_emoji": cp.icon_emoji or "📍",
+        "description_md": cp.description_md or "",
+        "zone_key": cp.zone_key,
+        "category": cp.category or "general",
+        "sort_order": int(cp.sort_order),
+        "created_at": cp.created_at,
+        "updated_at": cp.updated_at,
+    }
+
+
+def _default_project_zone(session: Session, project_id: str) -> str:
+    first_zone = session.exec(
+        select(UrbanSimZone)
+        .where(UrbanSimZone.project_id == project_id)
+        .order_by(UrbanSimZone.sort_order)
+    ).first()
+    return first_zone.zone_key if first_zone is not None else "LOBBY_MAIN"
 
 
 class SupportFeedbackRequest(BaseModel):
@@ -455,6 +722,8 @@ async def create_project(payload: ProjectCreateRequest):
             max_react_turns=payload.max_react_turns,
             max_cost_usd_per_run=payload.max_cost_usd_per_run,
             pilot_mode=payload.pilot_mode,
+            map_prompt=MULBERRYLANE_MAP_PROMPT if payload.seed_mulberrylane_template else None,
+            map_aspect_ratio=1.6 if payload.seed_mulberrylane_template else None,
             llm_config_id=payload.llm_config_id,
             enable_sociological_debrief=bool(payload.enable_sociological_debrief),
             enable_competency_prepost_quiz=bool(payload.enable_competency_prepost_quiz),
@@ -463,7 +732,8 @@ async def create_project(payload: ProjectCreateRequest):
         session.add(project)
         session.flush()
         if payload.seed_mulberrylane_template:
-            for z_key, z_name, z_type, z_desc, z_order in MULBERRYLANE_ZONES:
+            for z_key, z_name, z_type, z_desc, z_order, z_signals in MULBERRYLANE_ZONES:
+                geom = MULBERRYLANE_ZONE_GEOMETRIES.get(z_key, {})
                 session.add(
                     UrbanSimZone(
                         project_id=project.id,
@@ -471,7 +741,31 @@ async def create_project(payload: ProjectCreateRequest):
                         name=z_name,
                         zone_type=z_type,
                         description=z_desc,
+                        ambient_signals=z_signals,
                         sort_order=z_order,
+                        center_x_pct=float(geom["center_x_pct"]) if "center_x_pct" in geom else None,  # type: ignore[arg-type]
+                        center_y_pct=float(geom["center_y_pct"]) if "center_y_pct" in geom else None,  # type: ignore[arg-type]
+                        fill_color=str(geom["fill_color"]) if "fill_color" in geom else None,
+                        polygon_points_json=(
+                            json.dumps(geom["polygon_points"])
+                            if "polygon_points" in geom
+                            else None
+                        ),
+                    )
+                )
+            for cp in MULBERRYLANE_CHECKPOINTS:
+                session.add(
+                    UrbanSimCheckpoint(
+                        project_id=project.id,
+                        checkpoint_key=str(cp["checkpoint_key"]),
+                        name=str(cp["name"]),
+                        x_pct=float(cp["x_pct"]),  # type: ignore[arg-type]
+                        y_pct=float(cp["y_pct"]),  # type: ignore[arg-type]
+                        icon_emoji=str(cp["icon_emoji"]),
+                        description_md=str(cp["description_md"]),
+                        zone_key=str(cp["zone_key"]),
+                        category=str(cp["category"]),
+                        sort_order=int(cp["sort_order"]),  # type: ignore[arg-type]
                     )
                 )
             for item in MULBERRYLANE_PERSONAS:
@@ -714,6 +1008,13 @@ async def create_persona(project_id: str, payload: PersonaCreateRequest):
             pw_enc = encrypt_secret(payload.login_password, ws)
 
         sw_enabled = False if payload.group_type == "RESIDENT" else bool(payload.software_access_enabled)
+        act_skills = payload.default_activated_skill_ids
+        if act_skills is not None and not sw_enabled:
+            act_skills = [
+                str(s).strip()
+                for s in act_skills
+                if str(s).strip() and str(s).strip() != "env:DemegoWebPortalEnv@bql-qltn-ops-vn"
+            ]
         persona = UrbanSimPersona(
             project_id=project_id,
             agent_id=aid,
@@ -725,9 +1026,37 @@ async def create_persona(project_id: str, payload: PersonaCreateRequest):
             software_access_enabled=sw_enabled,
             is_pilot_member=payload.is_pilot_member,
             is_active=payload.is_active,
-            home_zone=payload.home_zone.strip() or "LOBBY_MAIN",
+            home_zone=payload.home_zone.strip() or _default_project_zone(session, project_id),
+            avatar_icon=(
+                payload.avatar_icon.strip()[:16]
+                if payload.avatar_icon and payload.avatar_icon.strip()
+                else resolve_default_persona_icon(
+                    payload.role_code.strip(), payload.group_type, payload.full_name.strip()
+                )
+            ),
             domain_knowledge_prompt=payload.domain_knowledge_prompt.strip(),
             initial_tasks_json=json.dumps(payload.initial_tasks, ensure_ascii=False),
+            default_activated_skill_ids_json=(
+                json.dumps(
+                    [str(s).strip() for s in act_skills if str(s).strip()],
+                    ensure_ascii=False,
+                )
+                if act_skills is not None
+                else None
+            ),
+            disabled_skill_ids_json=(
+                json.dumps(
+                    [str(s).strip() for s in payload.disabled_skill_ids if str(s).strip()],
+                    ensure_ascii=False,
+                )
+                if payload.disabled_skill_ids is not None
+                else None
+            ),
+            profile_traits_json=(
+                json.dumps(payload.profile_traits, ensure_ascii=False)
+                if payload.profile_traits
+                else None
+            ),
             portal_url=clean_portal,
             login_username=payload.login_username.strip() if payload.login_username else None,
             login_password_enc=pw_enc,
@@ -736,6 +1065,50 @@ async def create_persona(project_id: str, payload: PersonaCreateRequest):
         session.commit()
         session.refresh(persona)
         return {"success": True, "persona": _serialize_persona(persona)}
+
+
+@router.get("/available-skills")
+async def list_available_urban_sim_skills():
+    """Liệt kê toàn bộ Agent Skill (/skills + built-in + env UrbanSim) để gắn cho từng Persona."""
+    from agentsociety2.agent.base.skill_registry import get_skill_registry
+    from agentsociety2.backend.path_security import custom_skills_root
+    from agentsociety2.backend.routers.agent_skills import _ensure_env_skills_scanned
+
+    ws = _ws_root()
+    reg = get_skill_registry()
+    reg.scan_builtin()
+    c_root = custom_skills_root(str(ws))
+    if c_root.is_dir():
+        reg.scan_custom(c_root)
+    _ensure_env_skills_scanned(reg)
+
+    # Fallback scan for UrbanSim env skills in case env registry hasn't loaded modules yet
+    contrib_skills_root = Path(__file__).resolve().parents[2] / "contrib" / "env" / "urban_sim_skills"
+    if (contrib_skills_root / "bql").is_dir():
+        reg.scan_env(contrib_skills_root / "bql", "DemegoWebPortalEnv")
+    if (contrib_skills_root / "resident").is_dir():
+        reg.scan_env(contrib_skills_root / "resident", "UrbanCommAndIncidentEnv")
+
+    items = []
+    for desc in sorted(reg.list_all(), key=lambda d: (d.source != "env", d.source != "custom", d.name.lower())):
+        req_sw = desc.skill_id == "env:DemegoWebPortalEnv@bql-qltn-ops-vn"
+        rec_group = (
+            "BQL"
+            if desc.skill_id == "env:DemegoWebPortalEnv@bql-qltn-ops-vn"
+            else ("RESIDENT" if desc.skill_id == "env:UrbanCommAndIncidentEnv@urban-resident-vn" else "ALL")
+        )
+        items.append(
+            {
+                "skill_id": desc.skill_id,
+                "name": desc.name,
+                "description": desc.description,
+                "source": desc.source,
+                "source_label": desc.source_label,
+                "requires_software_access": req_sw,
+                "recommended_group": rec_group,
+            }
+        )
+    return {"success": True, "items": items}
 
 
 @router.get("/scenario-brief-template")
@@ -833,7 +1206,12 @@ async def update_persona(project_id: str, persona_id: str, payload: PersonaUpdat
         if payload.is_active is not None:
             persona.is_active = bool(payload.is_active)
         if payload.home_zone is not None:
-            persona.home_zone = payload.home_zone.strip() or "LOBBY_MAIN"
+            persona.home_zone = payload.home_zone.strip() or _default_project_zone(session, project_id)
+        if "avatar_icon" in payload.model_fields_set:
+            clean_icon = (payload.avatar_icon or "").strip()[:16]
+            persona.avatar_icon = clean_icon or resolve_default_persona_icon(
+                persona.role_code, persona.group_type, persona.full_name
+            )
         if payload.domain_knowledge_prompt is not None:
             persona.domain_knowledge_prompt = payload.domain_knowledge_prompt.strip()
         if payload.initial_tasks is not None:
@@ -841,6 +1219,39 @@ async def update_persona(project_id: str, persona_id: str, payload: PersonaUpdat
                 [str(t).strip() for t in payload.initial_tasks if str(t).strip()],
                 ensure_ascii=False,
             )
+        if "default_activated_skill_ids" in payload.model_fields_set:
+            if payload.default_activated_skill_ids is None:
+                persona.default_activated_skill_ids_json = None
+            else:
+                persona.default_activated_skill_ids_json = json.dumps(
+                    [str(s).strip() for s in payload.default_activated_skill_ids if str(s).strip()],
+                    ensure_ascii=False,
+                )
+        if "disabled_skill_ids" in payload.model_fields_set:
+            if payload.disabled_skill_ids is None:
+                persona.disabled_skill_ids_json = None
+            else:
+                persona.disabled_skill_ids_json = json.dumps(
+                    [str(s).strip() for s in payload.disabled_skill_ids if str(s).strip()],
+                    ensure_ascii=False,
+                )
+        if "profile_traits" in payload.model_fields_set:
+            if not payload.profile_traits:
+                persona.profile_traits_json = None
+            else:
+                persona.profile_traits_json = json.dumps(
+                    payload.profile_traits,
+                    ensure_ascii=False,
+                )
+        if payload.group_type == "RESIDENT" or not persona.software_access_enabled:
+            if getattr(persona, "default_activated_skill_ids_json", None):
+                cur_act = _parse_json_list(persona.default_activated_skill_ids_json)
+                cleaned_act = [
+                    str(s) for s in cur_act if str(s) != "env:DemegoWebPortalEnv@bql-qltn-ops-vn"
+                ]
+                persona.default_activated_skill_ids_json = json.dumps(
+                    cleaned_act, ensure_ascii=False
+                )
         if payload.portal_url is not None:
             if payload.portal_url.strip():
                 try:
@@ -1035,12 +1446,35 @@ async def test_atlas_connection(
     }
 
 
-# ==================== ZONES & 2D FLOORPLAN MAP ENDPOINTS ====================
+# ==================== ZONES, DIGITAL MAP & CHECKPOINT ENDPOINTS ====================
+
+
+def _require_digital_map_or_409(session: Session, proj: UrbanSimProject) -> None:
+    if not project_has_digital_map(session, proj):
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "DIGITAL_MAP_REQUIRED",
+                "message": "Cần khởi tạo Bản đồ Số (tải ảnh mặt bằng 2D hoặc vẽ/tạo ít nhất 1 Khu vực Polygon) trước khi tạo Chốt/Pin.",
+            },
+        )
+
+
+def _require_no_active_runs_or_409(session: Session, project_id: str) -> None:
+    runs = session.exec(
+        select(UrbanSimRun).where(UrbanSimRun.project_id == project_id)
+    ).all()
+    active = [r.id for r in runs if str(r.status or "").upper() in {"STARTING", "RUNNING", "PAUSING", "RESUMING"}]
+    if active:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Đang có ca mô phỏng hoạt động ({', '.join(active)}). Vui lòng tạm dừng trước khi thay thế cấu trúc bản đồ.",
+        )
 
 
 @router.get("/projects/{project_id}/zones")
 async def list_zones(project_id: str):
-    """Liệt kê danh sách các khu vực (Zone Topology) của dự án."""
+    """Liệt kê danh sách các khu vực (Zone Topology & Polygon) kèm trạng thái Bản đồ Số."""
     ws = _ws_root()
     init_urban_sim_db(ws)
     engine = get_engine(ws)
@@ -1051,33 +1485,51 @@ async def list_zones(project_id: str):
             .where(UrbanSimZone.project_id == project_id)
             .order_by(UrbanSimZone.sort_order)
         ).all()
+        personas = session.exec(
+            select(UrbanSimPersona).where(UrbanSimPersona.project_id == project_id)
+        ).all()
+        counts_by_zone: dict[str, int] = {}
+        for p in personas:
+            zk = (p.home_zone or "").strip()
+            if zk:
+                counts_by_zone[zk] = counts_by_zone.get(zk, 0) + 1
         return {
             "success": True,
             "has_zone_map_image": bool(proj.zone_map_image_rel),
+            "has_digital_map": project_has_digital_map(session, proj),
+            "map_prompt": getattr(proj, "map_prompt", None) or "",
+            "map_width": getattr(proj, "map_width", None),
+            "map_height": getattr(proj, "map_height", None),
+            "map_aspect_ratio": getattr(proj, "map_aspect_ratio", None) or 1.6,
+            "map_image_version": int(getattr(proj, "map_image_version", 0) or 0),
             "items": [
-                {
-                    "id": z.id,
-                    "project_id": z.project_id,
-                    "zone_key": z.zone_key,
-                    "name": z.name,
-                    "zone_type": z.zone_type,
-                    "description": z.description,
-                    "sort_order": int(z.sort_order),
-                }
-                for z in rows
+                _serialize_zone(z, counts_by_zone.get(z.zone_key, 0)) for z in rows
             ],
         }
 
 
 @router.post("/projects/{project_id}/zones")
 async def create_zone(project_id: str, payload: ZoneCreateRequest):
-    """Thêm Zone mới cho dự án."""
+    """Thêm Zone mới cho dự án (hỗ trợ tọa độ tâm & Polygon)."""
     ws = _ws_root()
     init_urban_sim_db(ws)
+    norm_pts: list[list[float]] | None = None
+    cx = payload.center_x_pct
+    cy = payload.center_y_pct
+    if payload.polygon_points is not None:
+        try:
+            norm_pts, auto_cx, auto_cy = validate_and_normalize_polygon(payload.polygon_points)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        if cx is None:
+            cx = auto_cx
+        if cy is None:
+            cy = auto_cy
+
     engine = get_engine(ws)
     with Session(engine) as session:
         _require_project(session, project_id)
-        key_norm = payload.zone_key.strip().upper().replace(" ", "_")
+        key_norm = _normalize_zone_key(payload.zone_key)
         dup = session.exec(
             select(UrbanSimZone).where(
                 UrbanSimZone.project_id == project_id,
@@ -1092,44 +1544,27 @@ async def create_zone(project_id: str, payload: ZoneCreateRequest):
             name=payload.name.strip(),
             zone_type=payload.zone_type,
             description=payload.description.strip(),
+            ambient_signals=payload.ambient_signals.strip(),
             sort_order=payload.sort_order,
+            center_x_pct=cx,
+            center_y_pct=cy,
+            polygon_points_json=json.dumps(norm_pts) if norm_pts is not None else None,
+            fill_color=(payload.fill_color or "").strip() or None,
         )
         session.add(zone)
+        session.flush()
+        recompute_checkpoint_zones(session, project_id)
         session.commit()
         session.refresh(zone)
         return {
             "success": True,
-            "zone": {
-                "id": zone.id,
-                "project_id": zone.project_id,
-                "zone_key": zone.zone_key,
-                "name": zone.name,
-                "zone_type": zone.zone_type,
-                "description": zone.description,
-                "sort_order": int(zone.sort_order),
-            },
+            "zone": _serialize_zone(zone, 0),
         }
-
-
-@router.delete("/projects/{project_id}/zones/{zone_id}")
-async def delete_zone(project_id: str, zone_id: str):
-    """Xóa một Zone khỏi dự án."""
-    ws = _ws_root()
-    init_urban_sim_db(ws)
-    engine = get_engine(ws)
-    with Session(engine) as session:
-        _require_project(session, project_id)
-        zone = session.get(UrbanSimZone, zone_id)
-        if zone is None or zone.project_id != project_id:
-            raise HTTPException(status_code=404, detail="Không tìm thấy Zone.")
-        session.delete(zone)
-        session.commit()
-        return {"success": True, "deleted_id": zone_id}
 
 
 @router.post("/projects/{project_id}/zones/map-image")
 async def upload_zone_map_image(project_id: str, file: UploadFile = File(...)):
-    """Upload ảnh sơ đồ 2D mặt bằng khu đô thị (chỉ PNG/JPEG/WEBP <= 5MB, kiểm magic bytes)."""
+    """Upload ảnh sơ đồ 2D mặt bằng khu đô thị (atomic content-addressed, kiểm decompression bomb)."""
     ws = _ws_root()
     init_urban_sim_db(ws)
     data = await file.read(_MAX_MAP_UPLOAD_BYTES + 1)
@@ -1141,25 +1576,72 @@ async def upload_zone_map_image(project_id: str, file: UploadFile = File(...)):
             detail="Kích thước ảnh sơ đồ vượt quá giới hạn 5 MB.",
         )
     ext, _media = _detect_raster_magic(data)
+    try:
+        img_w, img_h = parse_image_dimensions(data, ext)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    new_ratio = round(img_w / max(1, img_h), 4)
+    hash8 = hashlib.sha256(data).hexdigest()[:8]
+    filename = f"{project_id}_{hash8}.{ext}"
+    dest = resolve_urban_sim_map_image(ws, filename)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    tmp_dest = dest.with_name(f".tmp_{uuid.uuid4().hex[:8]}_{filename}")
 
     engine = get_engine(ws)
+    old_rel: str | None = None
+    aspect_ratio_changed = False
+    try:
+        tmp_dest.write_bytes(data)
+        os.replace(tmp_dest, dest)
+    except OSError as exc:
+        tmp_dest.unlink(missing_ok=True)
+        raise HTTPException(status_code=500, detail=f"Không thể ghi tệp ảnh lên ổ đĩa: {exc}") from exc
+
     with Session(engine) as session:
         proj = _require_project(session, project_id)
-        if proj.zone_map_image_rel:
-            try:
-                old_path = resolve_urban_sim_map_image(ws, proj.zone_map_image_rel)
-                old_path.unlink(missing_ok=True)
-            except HTTPException:
-                pass
-        filename = f"{project_id}.{ext}"
-        dest = resolve_urban_sim_map_image(ws, filename)
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_bytes(data)
+        old_rel = proj.zone_map_image_rel
+        old_ratio = float(getattr(proj, "map_aspect_ratio", None) or 0.0)
+        has_shapes = bool(
+            session.exec(
+                select(UrbanSimCheckpoint).where(UrbanSimCheckpoint.project_id == project_id)
+            ).first()
+            or any(
+                parse_polygon_json(getattr(z, "polygon_points_json", None)) is not None
+                for z in session.exec(
+                    select(UrbanSimZone).where(UrbanSimZone.project_id == project_id)
+                ).all()
+            )
+        )
+        if has_shapes and old_ratio > 0 and abs(new_ratio - old_ratio) / old_ratio > 0.10:
+            aspect_ratio_changed = True
+
         proj.zone_map_image_rel = filename
+        proj.map_width = img_w
+        proj.map_height = img_h
+        proj.map_aspect_ratio = new_ratio
+        proj.map_image_version = int(getattr(proj, "map_image_version", 0) or 0) + 1
+        proj.map_image_updated_at = _utcnow_iso()
         proj.updated_at = _utcnow_iso()
         session.add(proj)
         session.commit()
-        return {"success": True, "filename": filename, "size_bytes": len(data)}
+        session.refresh(proj)
+
+    if old_rel and old_rel != filename:
+        try:
+            resolve_urban_sim_map_image(ws, old_rel).unlink(missing_ok=True)
+        except HTTPException:
+            pass
+
+    return {
+        "success": True,
+        "filename": filename,
+        "size_bytes": len(data),
+        "map_width": img_w,
+        "map_height": img_h,
+        "map_aspect_ratio": new_ratio,
+        "map_image_version": int(proj.map_image_version),
+        "aspect_ratio_changed": aspect_ratio_changed,
+    }
 
 
 @router.get("/projects/{project_id}/zones/map-image")
@@ -1182,23 +1664,863 @@ async def get_zone_map_image(project_id: str):
 
 
 @router.delete("/projects/{project_id}/zones/map-image")
-async def delete_zone_map_image(project_id: str):
-    """Xóa ảnh sơ đồ 2D tùy chọn để quay về hiển thị thẻ Topology thuần túy."""
+async def delete_zone_map_image(
+    project_id: str,
+    clear_orphaned_checkpoints: bool = Query(False),
+):
+    """Xóa ảnh sơ đồ 2D tùy chọn (bảo vệ bất biến Bản đồ Số khi còn Chốt và không còn Polygon)."""
+    ws = _ws_root()
+    init_urban_sim_db(ws)
+    engine = get_engine(ws)
+    old_rel: str | None = None
+    with Session(engine) as session:
+        proj = _require_project(session, project_id)
+        cps = session.exec(
+            select(UrbanSimCheckpoint).where(UrbanSimCheckpoint.project_id == project_id)
+        ).all()
+        zones = session.exec(
+            select(UrbanSimZone).where(UrbanSimZone.project_id == project_id)
+        ).all()
+        has_polygon_zone = any(
+            parse_polygon_json(getattr(z, "polygon_points_json", None)) is not None
+            for z in zones
+        )
+        if cps and not has_polygon_zone:
+            if not clear_orphaned_checkpoints:
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "code": "DIGITAL_MAP_REQUIRED",
+                        "message": f"Không thể xóa ảnh 2D khi chưa có khu vực Polygon nào và đang có {len(cps)} Chốt/Pin (trừ khi clear_orphaned_checkpoints=true).",
+                    },
+                )
+            for cp in cps:
+                session.delete(cp)
+
+        if proj.zone_map_image_rel:
+            old_rel = proj.zone_map_image_rel
+            proj.zone_map_image_rel = None
+            proj.map_width = None
+            proj.map_height = None
+            proj.map_image_version = int(getattr(proj, "map_image_version", 0) or 0) + 1
+            proj.map_image_updated_at = _utcnow_iso()
+            proj.updated_at = _utcnow_iso()
+            session.add(proj)
+        session.commit()
+
+    if old_rel:
+        try:
+            resolve_urban_sim_map_image(ws, old_rel).unlink(missing_ok=True)
+        except HTTPException:
+            pass
+    return {"success": True}
+
+
+@router.patch("/projects/{project_id}/zones/{zone_id}")
+async def update_zone(project_id: str, zone_id: str, payload: ZoneUpdateRequest):
+    """Cập nhật Zone (cascade đổi zone_key sang Persona & Checkpoint; recompute Point-in-Polygon)."""
+    ws = _ws_root()
+    init_urban_sim_db(ws)
+    engine = get_engine(ws)
+    with Session(engine) as session:
+        _require_project(session, project_id)
+        zone = session.get(UrbanSimZone, zone_id)
+        if zone is None or zone.project_id != project_id:
+            raise HTTPException(status_code=404, detail="Không tìm thấy Zone.")
+
+        old_key = zone.zone_key
+        poly_changed = False
+        if payload.zone_key is not None:
+            new_key = _normalize_zone_key(payload.zone_key)
+            if new_key != old_key:
+                dup = session.exec(
+                    select(UrbanSimZone).where(
+                        UrbanSimZone.project_id == project_id,
+                        UrbanSimZone.zone_key == new_key,
+                        UrbanSimZone.id != zone.id,
+                    )
+                ).first()
+                if dup is not None:
+                    raise HTTPException(
+                        status_code=409,
+                        detail=f"Mã khu vực '{new_key}' đã tồn tại trong dự án.",
+                    )
+                zone.zone_key = new_key
+                attached_personas = session.exec(
+                    select(UrbanSimPersona).where(
+                        UrbanSimPersona.project_id == project_id,
+                        UrbanSimPersona.home_zone == old_key,
+                    )
+                ).all()
+                for p in attached_personas:
+                    p.home_zone = new_key
+                    p.updated_at = _utcnow_iso()
+                    session.add(p)
+                attached_cps = session.exec(
+                    select(UrbanSimCheckpoint).where(
+                        UrbanSimCheckpoint.project_id == project_id,
+                        UrbanSimCheckpoint.zone_key == old_key,
+                    )
+                ).all()
+                for cp in attached_cps:
+                    cp.zone_key = new_key
+                    cp.updated_at = _utcnow_iso()
+                    session.add(cp)
+
+        if payload.name is not None:
+            clean_name = payload.name.strip()
+            if not clean_name:
+                raise HTTPException(status_code=400, detail="Tên khu vực không được để trống.")
+            zone.name = clean_name
+        if payload.zone_type is not None:
+            zone.zone_type = payload.zone_type
+        if payload.description is not None:
+            zone.description = payload.description.strip()
+        if payload.ambient_signals is not None:
+            zone.ambient_signals = payload.ambient_signals.strip()
+        if payload.sort_order is not None:
+            zone.sort_order = int(payload.sort_order)
+        if payload.fill_color is not None:
+            zone.fill_color = payload.fill_color.strip() or None
+        if "polygon_points" in payload.model_fields_set:
+            if payload.polygon_points is None:
+                zone.polygon_points_json = None
+                poly_changed = True
+            else:
+                try:
+                    norm_pts, auto_cx, auto_cy = validate_and_normalize_polygon(payload.polygon_points)
+                except ValueError as exc:
+                    raise HTTPException(status_code=422, detail=str(exc)) from exc
+                zone.polygon_points_json = json.dumps(norm_pts)
+                zone.center_x_pct = auto_cx
+                zone.center_y_pct = auto_cy
+                poly_changed = True
+        if payload.center_x_pct is not None:
+            zone.center_x_pct = round(float(payload.center_x_pct), 2)
+        if payload.center_y_pct is not None:
+            zone.center_y_pct = round(float(payload.center_y_pct), 2)
+
+        session.add(zone)
+        session.flush()
+        if poly_changed:
+            recompute_checkpoint_zones(session, project_id)
+        session.commit()
+        session.refresh(zone)
+
+        persona_cnt = len(
+            session.exec(
+                select(UrbanSimPersona).where(
+                    UrbanSimPersona.project_id == project_id,
+                    UrbanSimPersona.home_zone == zone.zone_key,
+                )
+            ).all()
+        )
+        return {
+            "success": True,
+            "zone": _serialize_zone(zone, persona_cnt),
+        }
+
+
+@router.put("/projects/{project_id}/zones/{zone_id}/personas")
+async def assign_zone_personas(
+    project_id: str,
+    zone_id: str,
+    payload: ZoneAssignPersonasRequest,
+):
+    """Gắn/chuyển nguyên tử danh sách Nhân sự & Cư dân thuộc Khu vực (home_zone = zone.zone_key)."""
+    ws = _ws_root()
+    init_urban_sim_db(ws)
+    engine = get_engine(ws)
+    with Session(engine) as session:
+        _require_project(session, project_id)
+        zone = session.get(UrbanSimZone, zone_id)
+        if zone is None or zone.project_id != project_id:
+            raise HTTPException(status_code=404, detail="Không tìm thấy Khu vực.")
+
+        all_zones = session.exec(
+            select(UrbanSimZone)
+            .where(UrbanSimZone.project_id == project_id)
+            .order_by(UrbanSimZone.sort_order, UrbanSimZone.zone_key)
+        ).all()
+        other_zones = [z for z in all_zones if z.id != zone.id]
+        target_ids = {str(pid).strip() for pid in payload.persona_ids if str(pid).strip()}
+
+        all_personas = session.exec(
+            select(UrbanSimPersona).where(UrbanSimPersona.project_id == project_id)
+        ).all()
+        valid_persona_ids = {p.id for p in all_personas}
+        unknown = target_ids - valid_persona_ids
+        if unknown:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Danh sách nhân sự chứa ID không tồn tại trong dự án: {', '.join(sorted(unknown))}",
+            )
+
+        leaving = [
+            p for p in all_personas if p.home_zone == zone.zone_key and p.id not in target_ids
+        ]
+        fallback_key: str | None = None
+        if leaving:
+            if not other_zones:
+                raise HTTPException(
+                    status_code=409,
+                    detail="Không thể bỏ gắn nhân sự khỏi khu vực duy nhất của dự án. Hãy tạo thêm ít nhất 1 khu vực khác trước.",
+                )
+            req_fb = (payload.fallback_zone_key or "").strip().upper()
+            if req_fb and any(z.zone_key == req_fb for z in other_zones):
+                fallback_key = req_fb
+            else:
+                fallback_key = other_zones[0].zone_key
+
+        now = _utcnow_iso()
+        assigned_ids: list[str] = []
+        reassigned_out_count = 0
+        for p in all_personas:
+            if p.id in target_ids:
+                if p.home_zone != zone.zone_key:
+                    p.home_zone = zone.zone_key
+                    p.updated_at = now
+                    session.add(p)
+                assigned_ids.append(p.id)
+            elif p.home_zone == zone.zone_key and fallback_key:
+                p.home_zone = fallback_key
+                p.updated_at = now
+                session.add(p)
+                reassigned_out_count += 1
+
+        session.commit()
+        session.refresh(zone)
+        return {
+            "success": True,
+            "zone": _serialize_zone(zone, len(assigned_ids)),
+            "assigned_persona_ids": assigned_ids,
+            "reassigned_out_count": reassigned_out_count,
+            "fallback_zone_key": fallback_key,
+        }
+
+
+@router.delete("/projects/{project_id}/zones/{zone_id}")
+async def delete_zone(
+    project_id: str,
+    zone_id: str,
+    reassign_to: str | None = None,
+    clear_orphaned_checkpoints: bool = Query(False),
+):
+    """Xóa Zone khỏi dự án (bảo vệ home_zone Persona và bất biến Bản đồ Số khi còn Chốt/Pin)."""
     ws = _ws_root()
     init_urban_sim_db(ws)
     engine = get_engine(ws)
     with Session(engine) as session:
         proj = _require_project(session, project_id)
-        if proj.zone_map_image_rel:
-            try:
-                resolve_urban_sim_map_image(ws, proj.zone_map_image_rel).unlink(missing_ok=True)
-            except HTTPException:
-                pass
-            proj.zone_map_image_rel = None
-            proj.updated_at = _utcnow_iso()
-            session.add(proj)
-            session.commit()
-        return {"success": True}
+        zone = session.get(UrbanSimZone, zone_id)
+        if zone is None or zone.project_id != project_id:
+            raise HTTPException(status_code=404, detail="Không tìm thấy Zone.")
+
+        attached = session.exec(
+            select(UrbanSimPersona).where(
+                UrbanSimPersona.project_id == project_id,
+                UrbanSimPersona.home_zone == zone.zone_key,
+            )
+        ).all()
+        reassigned_count = 0
+        if attached:
+            target_key = (reassign_to or "").strip().upper()
+            if not target_key:
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        f"Không thể xóa '{zone.name}' ({zone.zone_key}) vì đang có {len(attached)} "
+                        "nhân sự/cư dân thuộc khu vực này. Hãy chọn khu vực thay thế để chuyển trước khi xóa."
+                    ),
+                )
+            target_zone = session.exec(
+                select(UrbanSimZone).where(
+                    UrbanSimZone.project_id == project_id,
+                    UrbanSimZone.zone_key == target_key,
+                )
+            ).first()
+            if target_zone is None or target_zone.id == zone.id:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Khu vực chuyển đến '{target_key}' không hợp lệ.",
+                )
+            for p in attached:
+                p.home_zone = target_zone.zone_key
+                p.updated_at = _utcnow_iso()
+                session.add(p)
+            reassigned_count = len(attached)
+
+        # Check dynamically whether deleting this zone leaves zero Digital Map while checkpoints exist
+        cps = session.exec(
+            select(UrbanSimCheckpoint).where(UrbanSimCheckpoint.project_id == project_id)
+        ).all()
+        if cps and not (proj.zone_map_image_rel or "").strip():
+            other_zones = session.exec(
+                select(UrbanSimZone).where(
+                    UrbanSimZone.project_id == project_id,
+                    UrbanSimZone.id != zone.id,
+                )
+            ).all()
+            still_has_polygon = any(
+                parse_polygon_json(getattr(z, "polygon_points_json", None)) is not None
+                for z in other_zones
+            )
+            if not still_has_polygon:
+                if not clear_orphaned_checkpoints:
+                    raise HTTPException(
+                        status_code=409,
+                        detail={
+                            "code": "DIGITAL_MAP_REQUIRED",
+                            "message": f"Không thể xóa khu vực Polygon cuối cùng khi dự án còn {len(cps)} Chốt/Pin (trừ khi chọn clear_orphaned_checkpoints=true).",
+                        },
+                    )
+                for cp in cps:
+                    session.delete(cp)
+
+        session.delete(zone)
+        session.flush()
+        recompute_checkpoint_zones(session, project_id)
+        session.commit()
+        return {
+            "success": True,
+            "deleted_id": zone_id,
+            "reassigned_personas": reassigned_count,
+        }
+
+
+@router.patch("/projects/{project_id}/digital-map")
+async def update_digital_map_meta(project_id: str, payload: DigitalMapMetaPatchRequest):
+    """Cập nhật prompt mô tả tổng thể & tỷ lệ khung của Bản đồ Số."""
+    ws = _ws_root()
+    init_urban_sim_db(ws)
+    engine = get_engine(ws)
+    with Session(engine) as session:
+        proj = _require_project(session, project_id)
+        if "map_prompt" in payload.model_fields_set:
+            proj.map_prompt = (payload.map_prompt or "").strip()
+        if payload.map_aspect_ratio is not None:
+            proj.map_aspect_ratio = round(float(payload.map_aspect_ratio), 4)
+        proj.updated_at = _utcnow_iso()
+        session.add(proj)
+        session.commit()
+        session.refresh(proj)
+        return {"success": True, "project": _serialize_project_summary(session, proj)}
+
+
+@router.get("/projects/{project_id}/digital-map/geojson")
+async def export_digital_map_geojson(project_id: str):
+    """Xuất Bản đồ Số (Polygon Khu vực + Point Chốt/Pin) theo chuẩn GeoJSON FeatureCollection."""
+    ws = _ws_root()
+    init_urban_sim_db(ws)
+    engine = get_engine(ws)
+    with Session(engine) as session:
+        proj = _require_project(session, project_id)
+        zones = session.exec(
+            select(UrbanSimZone)
+            .where(UrbanSimZone.project_id == project_id)
+            .order_by(UrbanSimZone.sort_order)
+        ).all()
+        cps = session.exec(
+            select(UrbanSimCheckpoint)
+            .where(UrbanSimCheckpoint.project_id == project_id)
+            .order_by(UrbanSimCheckpoint.sort_order, UrbanSimCheckpoint.name)  # type: ignore[arg-type]
+        ).all()
+        return build_digital_map_geojson(proj, zones, cps)
+
+
+@router.post("/projects/{project_id}/digital-map/generate")
+async def generate_digital_map(project_id: str, payload: DigitalMapGenerateRequest):
+    """Dùng LLM dự án (Vision fail-fast -> Text fallback minh bạch) sinh bản nháp Polygon Bản đồ Số."""
+    ws = _ws_root()
+    init_urban_sim_db(ws)
+    engine = get_engine(ws)
+    with Session(engine) as session:
+        proj = _require_project(session, project_id)
+        draft = await generate_digital_map_draft(
+            session,
+            proj,
+            ws,
+            map_prompt=payload.map_prompt,
+            use_image=payload.use_image,
+            max_zones=payload.max_zones,
+        )
+        return {"success": True, **draft}
+
+
+@router.post("/projects/{project_id}/digital-map/apply")
+async def apply_digital_map(project_id: str, payload: DigitalMapApplyRequest):
+    """Áp dụng bản nháp Bản đồ Số (MERGE bảo toàn Persona hoặc REPLACE có kiểm soát active run & remap home_zone)."""
+    ws = _ws_root()
+    init_urban_sim_db(ws)
+    validated_zones: list[dict[str, Any]] = []
+    seen_keys: set[str] = set()
+    for idx, item in enumerate(payload.zones):
+        zkey = _normalize_zone_key(item.zone_key)
+        if zkey in seen_keys:
+            raise HTTPException(status_code=400, detail=f"Trùng zone_key '{zkey}' trong danh sách áp dụng.")
+        seen_keys.add(zkey)
+        try:
+            pts, cx, cy = validate_and_normalize_polygon(item.polygon_points)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Polygon của '{zkey}' không hợp lệ: {exc}",
+            ) from exc
+        validated_zones.append(
+            {
+                "zone_key": zkey,
+                "name": item.name.strip(),
+                "zone_type": item.zone_type,
+                "description": item.description.strip(),
+                "ambient_signals": item.ambient_signals.strip(),
+                "fill_color": (item.fill_color or "").strip() or None,
+                "polygon_points": pts,
+                "center_x_pct": cx,
+                "center_y_pct": cy,
+                "sort_order": int(item.sort_order or (idx + 1)),
+            }
+        )
+
+    engine = get_engine(ws)
+    with Session(engine) as session:
+        proj = _require_project(session, project_id)
+        if payload.mode == "REPLACE":
+            _require_no_active_runs_or_409(session, project_id)
+
+        existing_zones = session.exec(
+            select(UrbanSimZone).where(UrbanSimZone.project_id == project_id)
+        ).all()
+        by_key = {z.zone_key: z for z in existing_zones}
+
+        if payload.mode == "REPLACE":
+            target_keys = {vz["zone_key"] for vz in validated_zones}
+            for ez in existing_zones:
+                if ez.zone_key not in target_keys:
+                    session.delete(ez)
+            session.flush()
+
+        for vz in validated_zones:
+            ez = by_key.get(vz["zone_key"])
+            if ez is not None:
+                ez.name = vz["name"]
+                ez.zone_type = vz["zone_type"]
+                ez.description = vz["description"] or ez.description
+                ez.ambient_signals = vz["ambient_signals"] or ez.ambient_signals
+                ez.fill_color = vz["fill_color"] or ez.fill_color
+                ez.polygon_points_json = json.dumps(vz["polygon_points"])
+                ez.center_x_pct = vz["center_x_pct"]
+                ez.center_y_pct = vz["center_y_pct"]
+                ez.sort_order = vz["sort_order"]
+                session.add(ez)
+            else:
+                session.add(
+                    UrbanSimZone(
+                        project_id=project_id,
+                        zone_key=vz["zone_key"],
+                        name=vz["name"],
+                        zone_type=vz["zone_type"],
+                        description=vz["description"],
+                        ambient_signals=vz["ambient_signals"],
+                        fill_color=vz["fill_color"],
+                        polygon_points_json=json.dumps(vz["polygon_points"]),
+                        center_x_pct=vz["center_x_pct"],
+                        center_y_pct=vz["center_y_pct"],
+                        sort_order=vz["sort_order"],
+                    )
+                )
+
+        if payload.map_prompt is not None:
+            proj.map_prompt = payload.map_prompt.strip()
+        if payload.aspect_ratio is not None and not proj.zone_map_image_rel:
+            proj.map_aspect_ratio = round(float(payload.aspect_ratio), 4)
+        proj.updated_at = _utcnow_iso()
+        session.add(proj)
+        session.flush()
+
+        # Remap orphaned Persona home_zones in REPLACE mode
+        valid_zone_keys = {vz["zone_key"] for vz in validated_zones}
+        if payload.mode == "REPLACE" and validated_zones:
+            fallback_zone_key = validated_zones[0]["zone_key"]
+            personas = session.exec(
+                select(UrbanSimPersona).where(UrbanSimPersona.project_id == project_id)
+            ).all()
+            for per in personas:
+                if (per.home_zone or "").strip() not in valid_zone_keys:
+                    per.home_zone = fallback_zone_key
+                    per.updated_at = _utcnow_iso()
+                    session.add(per)
+
+        recompute_checkpoint_zones(session, project_id)
+        session.commit()
+
+        final_zones = session.exec(
+            select(UrbanSimZone)
+            .where(UrbanSimZone.project_id == project_id)
+            .order_by(UrbanSimZone.sort_order)
+        ).all()
+        personas = session.exec(
+            select(UrbanSimPersona).where(UrbanSimPersona.project_id == project_id)
+        ).all()
+        counts_by_zone: dict[str, int] = {}
+        for p in personas:
+            zk = (p.home_zone or "").strip()
+            if zk:
+                counts_by_zone[zk] = counts_by_zone.get(zk, 0) + 1
+        return {
+            "success": True,
+            "mode": payload.mode,
+            "has_digital_map": project_has_digital_map(session, proj),
+            "zones": [_serialize_zone(z, counts_by_zone.get(z.zone_key, 0)) for z in final_zones],
+        }
+
+
+@router.put("/projects/{project_id}/zones/layout")
+async def save_zones_layout(project_id: str, payload: ZonesLayoutRequest):
+    """Lưu đồng loạt tọa độ Polygon / Tâm / Màu của các Zone trong 1 transaction atomic."""
+    ws = _ws_root()
+    init_urban_sim_db(ws)
+    engine = get_engine(ws)
+    with Session(engine) as session:
+        proj = _require_project(session, project_id)
+        zones_by_id = {
+            z.id: z
+            for z in session.exec(
+                select(UrbanSimZone).where(UrbanSimZone.project_id == project_id)
+            ).all()
+        }
+        # Validate ALL entries before mutating/committing (atomic rollback on any invalid item)
+        prepared: list[tuple[UrbanSimZone, str | None, float | None, float | None, str | None]] = []
+        for item in payload.zones:
+            z = zones_by_id.get(item.id)
+            if z is None:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Không tìm thấy Zone ID '{item.id}' trong dự án.",
+                )
+            next_poly_json = z.polygon_points_json
+            next_cx = item.center_x_pct if item.center_x_pct is not None else z.center_x_pct
+            next_cy = item.center_y_pct if item.center_y_pct is not None else z.center_y_pct
+            if "polygon_points" in item.model_fields_set:
+                if item.polygon_points is None:
+                    next_poly_json = None
+                else:
+                    try:
+                        norm_pts, auto_cx, auto_cy = validate_and_normalize_polygon(item.polygon_points)
+                    except ValueError as exc:
+                        raise HTTPException(
+                            status_code=422,
+                            detail=f"Polygon của '{z.zone_key}' không hợp lệ: {exc}",
+                        ) from exc
+                    next_poly_json = json.dumps(norm_pts)
+                    next_cx = auto_cx
+                    next_cy = auto_cy
+            next_color = (
+                (item.fill_color.strip() or None)
+                if item.fill_color is not None
+                else z.fill_color
+            )
+            prepared.append((z, next_poly_json, next_cx, next_cy, next_color))
+
+        for z, pjson, cx, cy, fcolor in prepared:
+            z.polygon_points_json = pjson
+            z.center_x_pct = cx
+            z.center_y_pct = cy
+            z.fill_color = fcolor
+            session.add(z)
+        proj.updated_at = _utcnow_iso()
+        session.add(proj)
+        session.flush()
+        recompute_checkpoint_zones(session, project_id)
+        session.commit()
+        return {"success": True, "updated_count": len(prepared)}
+
+
+@router.post("/projects/{project_id}/zones/generate-from-point")
+async def generate_zone_from_point(project_id: str, payload: ZoneFromPointRequest):
+    """Sinh bản nháp Polygon 1 khu vực từ 1 điểm tâm (center_x_pct, center_y_pct) + Prompt mô tả."""
+    ws = _ws_root()
+    init_urban_sim_db(ws)
+    engine = get_engine(ws)
+    with Session(engine) as session:
+        proj = _require_project(session, project_id)
+        result = await generate_zone_from_point_draft(
+            session,
+            proj,
+            ws,
+            center_x_pct=payload.center_x_pct,
+            center_y_pct=payload.center_y_pct,
+            prompt=payload.prompt,
+        )
+        return {"success": True, **result}
+
+
+@router.get("/projects/{project_id}/checkpoints")
+async def list_checkpoints(project_id: str):
+    """Liệt kê toàn bộ Chốt/Pin (Checkpoints) của dự án."""
+    ws = _ws_root()
+    init_urban_sim_db(ws)
+    engine = get_engine(ws)
+    with Session(engine) as session:
+        proj = _require_project(session, project_id)
+        rows = session.exec(
+            select(UrbanSimCheckpoint)
+            .where(UrbanSimCheckpoint.project_id == project_id)
+            .order_by(UrbanSimCheckpoint.sort_order, UrbanSimCheckpoint.name)  # type: ignore[arg-type]
+        ).all()
+        return {
+            "success": True,
+            "has_digital_map": project_has_digital_map(session, proj),
+            "items": [_serialize_checkpoint(cp) for cp in rows],
+        }
+
+
+@router.post("/projects/{project_id}/checkpoints")
+async def create_checkpoint(project_id: str, payload: CheckpointCreateRequest):
+    """Tạo Chốt/Pin thủ công (chỉ cho phép khi đã có Bản đồ Số; trả 409 nếu chưa đủ điều kiện)."""
+    ws = _ws_root()
+    init_urban_sim_db(ws)
+    engine = get_engine(ws)
+    with Session(engine) as session:
+        proj = _require_project(session, project_id)
+        _require_digital_map_or_409(session, proj)
+        cp_key = normalize_map_key(payload.checkpoint_key or payload.name, prefix="CP")
+        dup = session.exec(
+            select(UrbanSimCheckpoint).where(
+                UrbanSimCheckpoint.project_id == project_id,
+                UrbanSimCheckpoint.checkpoint_key == cp_key,
+            )
+        ).first()
+        if dup is not None:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Mã chốt '{cp_key}' đã tồn tại trong dự án.",
+            )
+        xp = round(max(0.5, min(99.5, float(payload.x_pct))), 2)
+        yp = round(max(0.5, min(99.5, float(payload.y_pct))), 2)
+        zones = session.exec(
+            select(UrbanSimZone).where(UrbanSimZone.project_id == project_id)
+        ).all()
+        zkey = find_containing_zone_key(xp, yp, zones)
+        cp = UrbanSimCheckpoint(
+            project_id=project_id,
+            checkpoint_key=cp_key,
+            name=payload.name.strip(),
+            x_pct=xp,
+            y_pct=yp,
+            icon_emoji=(payload.icon_emoji or "📍").strip()[:16] or "📍",
+            description_md=(payload.description_md or "").strip(),
+            zone_key=zkey,
+            category=payload.category,
+            sort_order=int(payload.sort_order),
+        )
+        session.add(cp)
+        session.commit()
+        session.refresh(cp)
+        return {"success": True, "checkpoint": _serialize_checkpoint(cp)}
+
+
+@router.put("/projects/{project_id}/checkpoints/layout")
+async def save_checkpoints_layout(project_id: str, payload: CheckpointsLayoutRequest):
+    """Cập nhật hàng loạt tọa độ kéo thả của các Chốt/Pin trong 1 transaction atomic."""
+    ws = _ws_root()
+    init_urban_sim_db(ws)
+    engine = get_engine(ws)
+    with Session(engine) as session:
+        _require_project(session, project_id)
+        zones = session.exec(
+            select(UrbanSimZone).where(UrbanSimZone.project_id == project_id)
+        ).all()
+        cps_by_id = {
+            cp.id: cp
+            for cp in session.exec(
+                select(UrbanSimCheckpoint).where(UrbanSimCheckpoint.project_id == project_id)
+            ).all()
+        }
+        prepared: list[tuple[UrbanSimCheckpoint, float, float, str | None]] = []
+        for item in payload.checkpoints:
+            cp = cps_by_id.get(item.id)
+            if cp is None:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Không tìm thấy Chốt ID '{item.id}' trong dự án.",
+                )
+            xp = round(max(0.5, min(99.5, float(item.x_pct))), 2)
+            yp = round(max(0.5, min(99.5, float(item.y_pct))), 2)
+            zkey = find_containing_zone_key(xp, yp, zones)
+            prepared.append((cp, xp, yp, zkey))
+
+        now_iso = _utcnow_iso()
+        for cp, xp, yp, zkey in prepared:
+            cp.x_pct = xp
+            cp.y_pct = yp
+            cp.zone_key = zkey
+            cp.updated_at = now_iso
+            session.add(cp)
+        session.commit()
+        return {"success": True, "updated_count": len(prepared)}
+
+
+@router.post("/projects/{project_id}/checkpoints/generate")
+async def generate_checkpoints(project_id: str, payload: CheckpointsGenerateRequest):
+    """Dùng AI Prompt + ngữ cảnh Bản đồ Số sinh danh sách Chốt/Pin dự kiến."""
+    ws = _ws_root()
+    init_urban_sim_db(ws)
+    engine = get_engine(ws)
+    with Session(engine) as session:
+        proj = _require_project(session, project_id)
+        result = await generate_checkpoints_draft(
+            session,
+            proj,
+            ws,
+            prompt=payload.prompt,
+            max_checkpoints=payload.max_checkpoints,
+        )
+        return {"success": True, **result}
+
+
+@router.post("/projects/{project_id}/checkpoints/apply-batch")
+async def apply_checkpoints_batch(project_id: str, payload: CheckpointsApplyBatchRequest):
+    """Lưu hàng loạt Chốt/Pin idempotent theo (project_id, checkpoint_key) trong 1 transaction atomic."""
+    ws = _ws_root()
+    init_urban_sim_db(ws)
+    engine = get_engine(ws)
+    with Session(engine) as session:
+        proj = _require_project(session, project_id)
+        _require_digital_map_or_409(session, proj)
+        zones = session.exec(
+            select(UrbanSimZone).where(UrbanSimZone.project_id == project_id)
+        ).all()
+        existing_by_key = {
+            cp.checkpoint_key: cp
+            for cp in session.exec(
+                select(UrbanSimCheckpoint).where(UrbanSimCheckpoint.project_id == project_id)
+            ).all()
+        }
+        seen_keys: set[str] = set()
+        now_iso = _utcnow_iso()
+        saved: list[UrbanSimCheckpoint] = []
+        for idx, item in enumerate(payload.checkpoints):
+            cp_key = normalize_map_key(item.checkpoint_key or item.name, prefix=f"CP_{idx + 1}")
+            if cp_key in seen_keys:
+                continue
+            seen_keys.add(cp_key)
+            xp = round(max(0.5, min(99.5, float(item.x_pct))), 2)
+            yp = round(max(0.5, min(99.5, float(item.y_pct))), 2)
+            zkey = find_containing_zone_key(xp, yp, zones)
+            existing_cp = existing_by_key.get(cp_key)
+            if existing_cp is not None:
+                existing_cp.name = item.name.strip()
+                existing_cp.x_pct = xp
+                existing_cp.y_pct = yp
+                existing_cp.icon_emoji = (item.icon_emoji or "📍").strip()[:16] or "📍"
+                existing_cp.description_md = (item.description_md or "").strip()
+                existing_cp.zone_key = zkey
+                existing_cp.category = item.category
+                existing_cp.sort_order = int(item.sort_order or (idx + 1))
+                existing_cp.updated_at = now_iso
+                session.add(existing_cp)
+                saved.append(existing_cp)
+            else:
+                cp = UrbanSimCheckpoint(
+                    project_id=project_id,
+                    checkpoint_key=cp_key,
+                    name=item.name.strip(),
+                    x_pct=xp,
+                    y_pct=yp,
+                    icon_emoji=(item.icon_emoji or "📍").strip()[:16] or "📍",
+                    description_md=(item.description_md or "").strip(),
+                    zone_key=zkey,
+                    category=item.category,
+                    sort_order=int(item.sort_order or (idx + 1)),
+                )
+                session.add(cp)
+                existing_by_key[cp_key] = cp
+                saved.append(cp)
+
+        session.commit()
+        for cp in saved:
+            session.refresh(cp)
+        return {
+            "success": True,
+            "items": [_serialize_checkpoint(cp) for cp in saved],
+        }
+
+
+@router.patch("/projects/{project_id}/checkpoints/{checkpoint_id}")
+async def update_checkpoint(
+    project_id: str, checkpoint_id: str, payload: CheckpointUpdateRequest
+):
+    """Cập nhật thông tin / tọa độ / emoji / mô tả Markdown của một Chốt/Pin."""
+    ws = _ws_root()
+    init_urban_sim_db(ws)
+    engine = get_engine(ws)
+    with Session(engine) as session:
+        _require_project(session, project_id)
+        cp = session.get(UrbanSimCheckpoint, checkpoint_id)
+        if cp is None or cp.project_id != project_id:
+            raise HTTPException(status_code=404, detail="Không tìm thấy Chốt/Pin.")
+        if payload.checkpoint_key is not None:
+            new_key = normalize_map_key(payload.checkpoint_key, prefix="CP")
+            if new_key != cp.checkpoint_key:
+                dup = session.exec(
+                    select(UrbanSimCheckpoint).where(
+                        UrbanSimCheckpoint.project_id == project_id,
+                        UrbanSimCheckpoint.checkpoint_key == new_key,
+                        UrbanSimCheckpoint.id != cp.id,
+                    )
+                ).first()
+                if dup is not None:
+                    raise HTTPException(
+                        status_code=409,
+                        detail=f"Mã chốt '{new_key}' đã tồn tại.",
+                    )
+                cp.checkpoint_key = new_key
+        if payload.name is not None:
+            clean_name = payload.name.strip()
+            if not clean_name:
+                raise HTTPException(status_code=400, detail="Tên chốt không được để trống.")
+            cp.name = clean_name
+        coords_changed = False
+        if payload.x_pct is not None:
+            cp.x_pct = round(max(0.5, min(99.5, float(payload.x_pct))), 2)
+            coords_changed = True
+        if payload.y_pct is not None:
+            cp.y_pct = round(max(0.5, min(99.5, float(payload.y_pct))), 2)
+            coords_changed = True
+        if coords_changed:
+            zones = session.exec(
+                select(UrbanSimZone).where(UrbanSimZone.project_id == project_id)
+            ).all()
+            cp.zone_key = find_containing_zone_key(cp.x_pct, cp.y_pct, zones)
+        if payload.icon_emoji is not None:
+            cp.icon_emoji = payload.icon_emoji.strip()[:16] or "📍"
+        if payload.description_md is not None:
+            cp.description_md = payload.description_md.strip()
+        if payload.category is not None:
+            cp.category = payload.category
+        if payload.sort_order is not None:
+            cp.sort_order = int(payload.sort_order)
+        cp.updated_at = _utcnow_iso()
+        session.add(cp)
+        session.commit()
+        session.refresh(cp)
+        return {"success": True, "checkpoint": _serialize_checkpoint(cp)}
+
+
+@router.delete("/projects/{project_id}/checkpoints/{checkpoint_id}")
+async def delete_checkpoint(project_id: str, checkpoint_id: str):
+    """Xóa một Chốt/Pin khỏi dự án."""
+    ws = _ws_root()
+    init_urban_sim_db(ws)
+    engine = get_engine(ws)
+    with Session(engine) as session:
+        _require_project(session, project_id)
+        cp = session.get(UrbanSimCheckpoint, checkpoint_id)
+        if cp is None or cp.project_id != project_id:
+            raise HTTPException(status_code=404, detail="Không tìm thấy Chốt/Pin.")
+        session.delete(cp)
+        session.commit()
+        return {"success": True, "deleted_id": checkpoint_id}
 
 
 # ==================== RUN LIFECYCLE ENDPOINTS ====================
@@ -1349,8 +2671,34 @@ def _extract_run_sim_clock(
         except Exception:
             pass
 
-    step_meta = _read_json_file(run_dir / SOCIETY_STEP_JSON)
+    step_meta_path = run_dir / SOCIETY_STEP_JSON
+    step_meta = _read_json_file(step_meta_path)
     current_raw = str(step_meta.get("current_time") or "").strip() or None
+
+    tick_started_dt: datetime | None = None
+    if step_meta_path.is_file():
+        try:
+            tick_started_dt = datetime.fromtimestamp(step_meta_path.stat().st_mtime, tz=UTC)
+        except OSError:
+            tick_started_dt = None
+    if tick_started_dt is None:
+        tick_started_dt = (
+            _parse_iso_preserving_tz(run.started_at)
+            or _parse_iso_preserving_tz(run.created_at)
+            or datetime.now(UTC)
+        )
+
+    est_wall_sec = 45.0 if bool(run.pilot_mode) else 90.0
+    started_dt_wall = _parse_iso_preserving_tz(run.started_at)
+    if int(run.step_count or 0) >= 1 and started_dt_wall is not None:
+        try:
+            avg_wall = (
+                tick_started_dt.astimezone(UTC) - started_dt_wall.astimezone(UTC)
+            ).total_seconds() / max(1, int(run.step_count))
+            if avg_wall > 5.0:
+                est_wall_sec = max(25.0, min(240.0, round(avg_wall, 1)))
+        except Exception:
+            pass
 
     start_dt = _parse_iso_preserving_tz(start_raw)
     current_dt = _parse_iso_preserving_tz(current_raw)
@@ -1390,6 +2738,8 @@ def _extract_run_sim_clock(
         "end_sim_time": end_raw,
         "tick_seconds": tick_seconds,
         "elapsed_seconds": elapsed_seconds,
+        "tick_started_at": tick_started_dt.isoformat(),
+        "estimated_tick_wall_seconds": est_wall_sec,
         "day_index": day_index,
         "total_sim_days": total_sim_days,
         **period_info,
@@ -1456,9 +2806,36 @@ def _read_agent_workspace_summary(run_dir: Path, agent_id: int) -> dict[str, int
     return out
 
 
+@router.get("/projects/{project_id}/runs/{run_id}/map-image")
+async def get_run_map_image(project_id: str, run_id: str):
+    """Phục vụ ảnh 2D snapshot của chính Run (bảo toàn lịch sử bất biến, fallback dự án cho Run cũ)."""
+    ws = _ws_root()
+    init_urban_sim_db(ws)
+    engine = get_engine(ws)
+    with Session(engine) as session:
+        proj, _run, run_dir = _require_run_and_dir(session, ws, project_id, run_id)
+        snap = _read_json_file(run_dir / "init" / "digital_map_snapshot.json")
+        snap_fname = str(snap.get("snapshot_image_filename") or "").strip()
+        if snap_fname:
+            snap_path = resolve_under_root(run_dir, "init", Path(snap_fname).name)
+            if snap_path.is_file():
+                return FileResponse(
+                    snap_path,
+                    headers={"X-Content-Type-Options": "nosniff"},
+                )
+        if proj.zone_map_image_rel:
+            img_path = resolve_urban_sim_map_image(ws, proj.zone_map_image_rel)
+            if img_path.is_file():
+                return FileResponse(
+                    img_path,
+                    headers={"X-Content-Type-Options": "nosniff"},
+                )
+        raise HTTPException(status_code=404, detail="Run này không có ảnh mặt bằng 2D.")
+
+
 @router.get("/projects/{project_id}/runs/{run_id}/state")
 async def get_run_state(project_id: str, run_id: str):
-    """Trạng thái tổng hợp thời gian thực của Run (KPIs, Sim Clock, Zone Topology, Incidents, Agents, Cost)."""
+    """Trạng thái tổng hợp thời gian thực của Run (Snapshot Bản đồ Số + Live Movement Overlay + KPIs)."""
     ws = _ws_root()
     init_urban_sim_db(ws)
     engine = get_engine(ws)
@@ -1469,11 +2846,6 @@ async def get_run_state(project_id: str, run_id: str):
         session.commit()
         session.refresh(run)
 
-        zones = session.exec(
-            select(UrbanSimZone)
-            .where(UrbanSimZone.project_id == project_id)
-            .order_by(UrbanSimZone.sort_order)
-        ).all()
         personas = session.exec(
             select(UrbanSimPersona)
             .where(UrbanSimPersona.project_id == project_id)
@@ -1485,10 +2857,96 @@ async def get_run_state(project_id: str, run_id: str):
             run_dir, run.status, int(run.step_count), int(run.total_steps)
         )
         run_payload["current_sim_time"] = sim_clock.get("current_sim_time")
+
+        snap = _read_json_file(run_dir / "init" / "digital_map_snapshot.json")
+        has_snapshot = isinstance(snap, dict) and isinstance(snap.get("zones"), list)
+        if has_snapshot:
+            zones_source: list[dict[str, Any]] = [
+                dict(z) for z in snap.get("zones", []) if isinstance(z, dict)
+            ]
+            checkpoints_source: list[dict[str, Any]] = [
+                dict(cp) for cp in (snap.get("checkpoints") or []) if isinstance(cp, dict)
+            ]
+            snap_fname = str(snap.get("snapshot_image_filename") or "").strip()
+            has_map_img = bool(
+                snap_fname and (run_dir / "init" / Path(snap_fname).name).is_file()
+            )
+            map_version = int(snap.get("map_image_version") or 0)
+            digital_map_meta = {
+                "has_digital_map": bool(snap.get("has_digital_map")),
+                "map_prompt": str(snap.get("map_prompt") or ""),
+                "map_width": snap.get("map_width"),
+                "map_height": snap.get("map_height"),
+                "map_aspect_ratio": float(snap.get("map_aspect_ratio") or 1.6),
+                "map_image_version": map_version,
+                "has_map_image": has_map_img,
+                "image_url": (
+                    f"/api/v1/urban-sim/projects/{project_id}/runs/{run_id}/map-image?v={map_version}"
+                    if has_map_img
+                    else None
+                ),
+            }
+        else:
+            db_zones = session.exec(
+                select(UrbanSimZone)
+                .where(UrbanSimZone.project_id == project_id)
+                .order_by(UrbanSimZone.sort_order)
+            ).all()
+            db_cps = session.exec(
+                select(UrbanSimCheckpoint)
+                .where(UrbanSimCheckpoint.project_id == project_id)
+                .order_by(UrbanSimCheckpoint.sort_order, UrbanSimCheckpoint.name)  # type: ignore[arg-type]
+            ).all()
+            zones_source = [
+                {
+                    "id": z.id,
+                    "zone_key": z.zone_key,
+                    "name": z.name,
+                    "zone_type": z.zone_type,
+                    "description": z.description,
+                    "center_x_pct": getattr(z, "center_x_pct", None),
+                    "center_y_pct": getattr(z, "center_y_pct", None),
+                    "polygon_points": parse_polygon_json(getattr(z, "polygon_points_json", None)),
+                    "fill_color": getattr(z, "fill_color", None),
+                }
+                for z in db_zones
+            ]
+            checkpoints_source = [
+                {
+                    "id": cp.id,
+                    "checkpoint_key": cp.checkpoint_key,
+                    "name": cp.name,
+                    "x_pct": round(float(cp.x_pct), 2),
+                    "y_pct": round(float(cp.y_pct), 2),
+                    "icon_emoji": cp.icon_emoji or "📍",
+                    "description_md": cp.description_md or "",
+                    "zone_key": cp.zone_key,
+                    "category": cp.category or "general",
+                }
+                for cp in db_cps
+            ]
+            has_map_img = bool(proj.zone_map_image_rel)
+            map_version = int(getattr(proj, "map_image_version", 0) or 0)
+            digital_map_meta = {
+                "has_digital_map": has_map_img or any(bool(z.get("polygon_points")) for z in zones_source),
+                "map_prompt": getattr(proj, "map_prompt", None) or "",
+                "map_width": getattr(proj, "map_width", None),
+                "map_height": getattr(proj, "map_height", None),
+                "map_aspect_ratio": float(getattr(proj, "map_aspect_ratio", None) or 1.6),
+                "map_image_version": map_version,
+                "has_map_image": has_map_img,
+                "image_url": (
+                    f"/api/v1/urban-sim/projects/{project_id}/runs/{run_id}/map-image?v={map_version}"
+                    if has_map_img
+                    else None
+                ),
+            }
+
         proj_meta = {
             "id": proj.id,
             "name": proj.name,
-            "has_zone_map_image": bool(proj.zone_map_image_rel),
+            "has_zone_map_image": digital_map_meta["has_map_image"],
+            "has_digital_map": digital_map_meta["has_digital_map"],
             "max_cost_usd_per_run": float(proj.max_cost_usd_per_run),
         }
 
@@ -1505,6 +2963,8 @@ async def get_run_state(project_id: str, run_id: str):
     cost_info = compute_run_cost(llm_raw)
 
     agent_zones = comm_state.get("agent_zones") or {}
+    agent_positions = comm_state.get("agent_positions") or {}
+    last_move_seq = int(comm_state.get("last_move_event_seq") or 0)
     mailboxes = comm_state.get("mailboxes") if isinstance(comm_state.get("mailboxes"), dict) else {}
     incidents_map = comm_state.get("incidents") or {}
     incidents = sorted(
@@ -1518,10 +2978,40 @@ async def get_run_state(project_id: str, run_id: str):
     bot_sessions = atlas_state.get("bot_sessions") or {}
     asks_cnt = atlas_state.get("total_asks_by_agent") or {}
 
+    # Compute zone centers deterministically for fallback when zone lacks center_x/center_y
+    z_centers: dict[str, tuple[float, float]] = {}
+    z_cols = max(1, math.ceil(math.sqrt(max(1, len(zones_source)))))
+    for z_idx, z_item in enumerate(zones_source):
+        zkey = str(z_item.get("zone_key") or "")
+        zx = z_item.get("center_x_pct")
+        zy = z_item.get("center_y_pct")
+        poly = z_item.get("polygon_points")
+        if (zx is None or zy is None) and isinstance(poly, list) and len(poly) >= 3:
+            try:
+                pts = [(float(pt[0]), float(pt[1])) for pt in poly]
+                zx = sum(pt[0] for pt in pts) / len(pts)
+                zy = sum(pt[1] for pt in pts) / len(pts)
+            except (TypeError, ValueError, IndexError):
+                zx, zy = None, None
+        if zx is None or zy is None:
+            ri, ci = divmod(z_idx, z_cols)
+            zx = 14.0 + (ci + 0.5) * (72.0 / z_cols)
+            zy = 16.0 + (ri + 0.5) * (68.0 / max(1, math.ceil(len(zones_source) / z_cols)))
+        zx_r = round(float(zx), 2)
+        zy_r = round(float(zy), 2)
+        z_item["center_x_pct"] = zx_r
+        z_item["center_y_pct"] = zy_r
+        if zkey:
+            z_centers[zkey] = (zx_r, zy_r)
+
     stream_counts = {"COMM": 0, "WEB": 0, "ATLAS": 0, "INCIDENT": 0}
     events_path = run_dir / "urban_events.jsonl"
     latest_seq = 0
     per_agent_events: dict[int, dict[str, Any]] = {}
+    agent_trails: dict[int, deque[dict[str, Any]]] = {}
+    recent_movements: deque[dict[str, Any]] = deque(maxlen=30)
+    live_move_overlay: dict[int, tuple[int, dict[str, Any]]] = {}
+
     if events_path.is_file():
         with open(events_path, "r", encoding="utf-8") as fh:
             for line in fh:
@@ -1542,6 +3032,7 @@ async def get_run_state(project_id: str, run_id: str):
                     latest_seq = seq_val
 
                 raw_aid = ev.get("agent_id")
+                act_name = str(ev.get("action") or "")
                 if isinstance(raw_aid, int) and not isinstance(raw_aid, bool):
                     bucket = per_agent_events.setdefault(
                         raw_aid,
@@ -1573,12 +3064,51 @@ async def get_run_state(project_id: str, run_id: str):
                     if seq_val >= bucket["last_seq"]:
                         bucket["last_seq"] = seq_val
                         bucket["last_event"] = {
-                            "action": str(ev.get("action") or ""),
+                            "action": act_name,
                             "stream": st,
                             "summary": str(ev.get("summary") or "").strip(),
                             "sim_time": ev.get("sim_time"),
                             "ok": ev_ok,
                         }
+
+                    if act_name in {"move_to_zone", "move_to_checkpoint"}:
+                        det = ev.get("details") if isinstance(ev.get("details"), dict) else {}
+                        to_zone = str(det.get("to_zone") or "")
+                        fallback_xy = z_centers.get(to_zone, (50.0, 50.0))
+                        to_x = det.get("to_x_pct")
+                        to_y = det.get("to_y_pct")
+                        px = round(float(to_x), 2) if to_x is not None else fallback_xy[0]
+                        py = round(float(to_y), 2) if to_y is not None else fallback_xy[1]
+                        mv_pt = {
+                            "seq": seq_val,
+                            "action": act_name,
+                            "x_pct": px,
+                            "y_pct": py,
+                            "zone_key": to_zone,
+                            "checkpoint_key": det.get("checkpoint_key"),
+                            "checkpoint_name": det.get("checkpoint_name"),
+                            "icon_emoji": det.get("icon_emoji"),
+                            "activity": str(det.get("activity") or ""),
+                            "movement_status": str(det.get("movement_status") or "moving"),
+                            "sim_time": ev.get("sim_time"),
+                        }
+                        agent_trails.setdefault(raw_aid, deque(maxlen=12)).append(mv_pt)
+                        recent_movements.append(
+                            {
+                                **mv_pt,
+                                "agent_id": raw_aid,
+                                "agent_name": str(ev.get("agent_name") or ""),
+                                "role_title": str(ev.get("role_title") or ""),
+                                "from_x_pct": det.get("from_x_pct"),
+                                "from_y_pct": det.get("from_y_pct"),
+                                "from_zone": det.get("from_zone"),
+                                "summary": str(ev.get("summary") or ""),
+                            }
+                        )
+                        if seq_val > last_move_seq:
+                            prev_ov = live_move_overlay.get(raw_aid)
+                            if prev_ov is None or seq_val >= prev_ov[0]:
+                                live_move_overlay[raw_aid] = (seq_val, mv_pt)
 
     incidents_related_by_agent: dict[int, int] = {}
     incidents_open_by_agent: dict[int, int] = {}
@@ -1627,6 +3157,30 @@ async def get_run_state(project_id: str, run_id: str):
         ws_summary = _read_agent_workspace_summary(run_dir, aid_int)
         last_ev = ev_stats.get("last_event") if isinstance(ev_stats.get("last_event"), dict) else {}
 
+        pos_state = agent_positions.get(aid_str) if isinstance(agent_positions.get(aid_str), dict) else {}
+        cur_zone = str(agent_zones.get(aid_str) or p.home_zone)
+        fb_x, fb_y = z_centers.get(cur_zone, (50.0, 50.0))
+        cur_x = round(float(pos_state.get("x_pct")), 2) if pos_state.get("x_pct") is not None else fb_x
+        cur_y = round(float(pos_state.get("y_pct")), 2) if pos_state.get("y_pct") is not None else fb_y
+        cur_cp_key = pos_state.get("checkpoint_key")
+        cur_cp_name = pos_state.get("checkpoint_name")
+        cur_activity = str(pos_state.get("activity") or "")
+        mv_status = str(pos_state.get("movement_status") or "idle")
+
+        # Live mid-tick overlay from urban_events.jsonl (events strictly newer than last_move_event_seq)
+        if aid_int in live_move_overlay:
+            _, ov = live_move_overlay[aid_int]
+            if ov.get("zone_key"):
+                cur_zone = str(ov["zone_key"])
+            cur_x = float(ov["x_pct"])
+            cur_y = float(ov["y_pct"])
+            cur_cp_key = ov.get("checkpoint_key")
+            cur_cp_name = ov.get("checkpoint_name")
+            cur_activity = str(ov.get("activity") or "")
+            mv_status = str(ov.get("movement_status") or "moving")
+
+        trail_list = list(agent_trails.get(aid_int) or [])
+
         agent_statuses.append(
             {
                 "agent_id": p.agent_id,
@@ -1635,8 +3189,17 @@ async def get_run_state(project_id: str, run_id: str):
                 "role_title": p.role_title,
                 "department": p.department,
                 "group_type": p.group_type,
+                "avatar_icon": (getattr(p, "avatar_icon", None) or "").strip()
+                or resolve_default_persona_icon(p.role_code, p.group_type, p.full_name),
                 "software_access_enabled": bool(p.software_access_enabled),
-                "current_zone": str(agent_zones.get(aid_str) or p.home_zone),
+                "current_zone": cur_zone,
+                "current_x_pct": cur_x,
+                "current_y_pct": cur_y,
+                "current_checkpoint_key": cur_cp_key,
+                "current_checkpoint_name": cur_cp_name,
+                "current_activity": cur_activity,
+                "movement_status": mv_status,
+                "recent_trail": trail_list,
                 "current_url": str(last_urls.get(aid_str) or ""),
                 "web_actions_count": web_cnt,
                 "blocked_actions_count": int(blocked_cnt.get(aid_str) or 0),
@@ -1666,8 +3229,20 @@ async def get_run_state(project_id: str, run_id: str):
             }
         )
 
+    active_total = int(run.active_agent_count or len(agent_statuses))
+    sim_clock["agents_completed_in_tick"] = min(
+        active_total,
+        sum(
+            1
+            for ag in agent_statuses
+            if int(ag.get("episodes_count") or 0) > int(run.step_count or 0)
+        ),
+    )
+    sim_clock["active_agent_count"] = active_total
+
     zone_cards: list[dict[str, Any]] = []
-    for z in zones:
+    for z in zones_source:
+        zkey = str(z.get("zone_key") or "")
         agents_here = [
             {
                 "agent_id": a["agent_id"],
@@ -1676,35 +3251,74 @@ async def get_run_state(project_id: str, run_id: str):
                 "group_type": a["group_type"],
             }
             for a in agent_statuses
-            if a["current_zone"] == z.zone_key
+            if a["current_zone"] == zkey
         ]
         open_inc_here = [
             inc
             for inc in incidents
-            if inc.get("zone_key") == z.zone_key and inc.get("status") != "RESOLVED"
+            if inc.get("zone_key") == zkey and inc.get("status") != "RESOLVED"
         ]
         zone_cards.append(
             {
-                "zone_key": z.zone_key,
-                "name": z.name,
-                "zone_type": z.zone_type,
-                "description": z.description,
+                "id": z.get("id"),
+                "zone_key": zkey,
+                "name": z.get("name", zkey),
+                "zone_type": z.get("zone_type", "OTHER"),
+                "description": z.get("description", ""),
+                "center_x_pct": z.get("center_x_pct"),
+                "center_y_pct": z.get("center_y_pct"),
+                "polygon_points": z.get("polygon_points"),
+                "fill_color": z.get("fill_color"),
+                "open_incident_count": len(open_inc_here),
                 "agents_here": agents_here,
                 "open_incidents": open_inc_here,
+            }
+        )
+
+    checkpoint_cards: list[dict[str, Any]] = []
+    for cp in checkpoints_source:
+        cpkey = str(cp.get("checkpoint_key") or "")
+        cp_agents = [
+            {
+                "agent_id": a["agent_id"],
+                "full_name": a["full_name"],
+                "role_title": a["role_title"],
+                "group_type": a["group_type"],
+                "current_activity": a["current_activity"],
+                "movement_status": a["movement_status"],
+            }
+            for a in agent_statuses
+            if a.get("current_checkpoint_key") == cpkey
+        ]
+        checkpoint_cards.append(
+            {
+                "id": cp.get("id"),
+                "checkpoint_key": cpkey,
+                "name": cp.get("name", cpkey),
+                "x_pct": cp.get("x_pct"),
+                "y_pct": cp.get("y_pct"),
+                "icon_emoji": cp.get("icon_emoji") or "📍",
+                "description_md": cp.get("description_md") or "",
+                "zone_key": cp.get("zone_key"),
+                "category": cp.get("category") or "general",
+                "agents_here": cp_agents,
             }
         )
 
     return {
         "success": True,
         "project": proj_meta,
+        "digital_map": digital_map_meta,
         "run": run_payload,
         "sim_clock": sim_clock,
         "cost": cost_info,
         "stream_counts": stream_counts,
         "latest_seq": latest_seq,
         "zones": zone_cards,
-        "incidents": incidents,
+        "checkpoints": checkpoint_cards,
         "agent_statuses": agent_statuses,
+        "recent_movements": list(reversed(list(recent_movements))),
+        "incidents": incidents,
     }
 
 

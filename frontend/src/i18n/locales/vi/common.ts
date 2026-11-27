@@ -6,7 +6,7 @@ export default {
         github: 'GitHub',
         v2: 'AgentSociety 2',
         llmConfigs: 'LLM',
-        maps: 'Bản đồ',
+        maps: 'Bản đồ giao thông (.pb)',
         agents: 'Cư dân',
         agentConfigs: 'Cấu hình cư dân',
         agentTemplates: 'Mẫu cư dân',
@@ -19,7 +19,7 @@ export default {
         demoUser: 'Người dùng Demo',
         bill: 'Thanh toán',
         profiles: 'Hồ sơ',
-        skills: 'Kỹ năng cư dân',
+        skills: 'Kỹ năng Agent',
         systemBackup: 'Sao lưu & Khôi phục',
     },
     common: {

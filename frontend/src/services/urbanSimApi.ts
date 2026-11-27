@@ -35,6 +35,7 @@ export interface UrbanSimProjectStats {
     resident_count: number;
     bql_credentials_configured: number;
     zones_count: number;
+    checkpoints_count?: number;
     atlas_key_configured: boolean;
     atlas_verified_at: string | null;
 }
@@ -54,6 +55,13 @@ export interface UrbanSimProjectSummary {
     pilot_mode: boolean;
     zone_map_image_rel: string | null;
     has_zone_map_image: boolean;
+    has_digital_map?: boolean;
+    map_prompt?: string;
+    map_width?: number | null;
+    map_height?: number | null;
+    map_aspect_ratio?: number;
+    map_image_version?: number;
+    map_image_updated_at?: string | null;
     llm_config_id?: string | null;
     enable_sociological_debrief?: boolean;
     enable_competency_prepost_quiz?: boolean;
@@ -62,6 +70,26 @@ export interface UrbanSimProjectSummary {
     latest_run: UrbanSimRun | null;
     created_at: string;
     updated_at: string;
+}
+
+export interface PersonaProfileTraits {
+    age?: number | null;
+    gender?: string;
+    occupation?: string;
+    personality_tags?: string[];
+    communication_style?: string;
+    daily_routine?: string;
+    background_story?: string;
+}
+
+export interface UrbanSimSkillOption {
+    skill_id: string;
+    name: string;
+    description: string;
+    source: string;
+    source_label: string;
+    requires_software_access: boolean;
+    recommended_group: "BQL" | "RESIDENT" | "ALL" | string;
 }
 
 export interface UrbanSimPersona {
@@ -77,8 +105,12 @@ export interface UrbanSimPersona {
     is_pilot_member: boolean;
     is_active: boolean;
     home_zone: string;
+    avatar_icon?: string | null;
     domain_knowledge_prompt: string;
     initial_tasks: string[];
+    default_activated_skill_ids?: string[] | null;
+    disabled_skill_ids?: string[] | null;
+    profile_traits?: PersonaProfileTraits;
     portal_url: string | null;
     login_username: string | null;
     has_password: boolean;
@@ -109,14 +141,140 @@ export interface UrbanSimAtlasConfig {
     updated_at: string | null;
 }
 
+export type ZoneType =
+    | "LOBBY"
+    | "OFFICE"
+    | "TECHNICAL"
+    | "SECURITY"
+    | "TOWER"
+    | "UTILITY"
+    | "PARKING"
+    | "COMMERCIAL"
+    | "OTHER";
+
+export type CheckpointCategory = "security" | "facility" | "amenity" | "service" | "general";
+
+export type PolygonPoint = [number, number];
+
 export interface UrbanSimZone {
     id: string;
     project_id: string;
     zone_key: string;
     name: string;
-    zone_type: "LOBBY" | "OFFICE" | "TECHNICAL" | "SECURITY" | "TOWER";
+    zone_type: ZoneType;
     description: string;
+    ambient_signals?: string;
     sort_order: number;
+    persona_count?: number;
+    center_x_pct?: number | null;
+    center_y_pct?: number | null;
+    polygon_points?: PolygonPoint[] | null;
+    fill_color?: string | null;
+}
+
+export interface UrbanSimCheckpoint {
+    id: string;
+    project_id: string;
+    checkpoint_key: string;
+    name: string;
+    x_pct: number;
+    y_pct: number;
+    icon_emoji: string;
+    description_md: string;
+    zone_key: string | null;
+    category: CheckpointCategory;
+    sort_order: number;
+    created_at?: string;
+    updated_at?: string;
+    agents_here?: Array<{
+        agent_id: number;
+        full_name: string;
+        role_title: string;
+        group_type: string;
+        current_activity?: string;
+        movement_status?: string;
+    }>;
+}
+
+export interface DigitalMapMeta {
+    has_digital_map: boolean;
+    map_prompt: string;
+    map_width?: number | null;
+    map_height?: number | null;
+    map_aspect_ratio: number;
+    map_image_version: number;
+    has_map_image: boolean;
+    image_url?: string | null;
+}
+
+export interface AgentMovementTrailPoint {
+    seq: number;
+    action: string;
+    x_pct: number;
+    y_pct: number;
+    zone_key: string;
+    checkpoint_key?: string | null;
+    checkpoint_name?: string | null;
+    icon_emoji?: string | null;
+    activity: string;
+    movement_status: string;
+    sim_time?: string | null;
+}
+
+export interface RecentMovementEvent extends AgentMovementTrailPoint {
+    agent_id: number;
+    agent_name: string;
+    role_title: string;
+    from_x_pct?: number | null;
+    from_y_pct?: number | null;
+    from_zone?: string | null;
+    summary: string;
+}
+
+export interface GeneratedMapZoneDraft {
+    zone_key: string;
+    name: string;
+    zone_type: ZoneType;
+    description: string;
+    ambient_signals: string;
+    fill_color: string;
+    polygon_points: PolygonPoint[];
+    center_x_pct: number;
+    center_y_pct: number;
+    sort_order?: number;
+}
+
+export interface DigitalMapGenerateResponse {
+    map_prompt: string;
+    aspect_ratio: number;
+    zones: GeneratedMapZoneDraft[];
+    used_vision: boolean;
+    fallback_reason: string | null;
+    llm?: { source: string; provider: string; model: string };
+}
+
+export interface ZoneFromPointResponse {
+    zone: GeneratedMapZoneDraft;
+    used_vision: boolean;
+    fallback_reason: string | null;
+}
+
+export interface GeneratedCheckpointDraft {
+    checkpoint_key: string;
+    name: string;
+    x_pct: number;
+    y_pct: number;
+    icon_emoji: string;
+    category: CheckpointCategory;
+    zone_key: string | null;
+    description_md: string;
+    sort_order?: number;
+}
+
+export interface CheckpointsGenerateResponse {
+    checkpoints: GeneratedCheckpointDraft[];
+    used_vision: boolean;
+    fallback_reason: string | null;
 }
 
 export interface PreflightReport {
@@ -204,6 +362,10 @@ export interface SimClockInfo {
     end_sim_time: string | null;
     tick_seconds: number;
     elapsed_seconds?: number;
+    tick_started_at?: string | null;
+    estimated_tick_wall_seconds?: number | null;
+    agents_completed_in_tick?: number | null;
+    active_agent_count?: number | null;
     time_band: string | null;
     time_band_label_vi: string | null;
     period_vi: string | null;
@@ -221,7 +383,15 @@ export interface AgentStatusRow {
     department: string;
     group_type: "BQL" | "RESIDENT";
     software_access_enabled: boolean;
+    avatar_icon?: string | null;
     current_zone: string;
+    current_x_pct?: number;
+    current_y_pct?: number;
+    current_checkpoint_key?: string | null;
+    current_checkpoint_name?: string | null;
+    current_activity?: string;
+    movement_status?: string;
+    recent_trail?: AgentMovementTrailPoint[];
     current_url: string;
     web_actions_count: number;
     blocked_actions_count: number;
@@ -251,10 +421,18 @@ export interface AgentStatusRow {
 }
 
 export interface ZoneTopologyCard {
+    id?: string;
     zone_key: string;
     name: string;
     zone_type: string;
     description: string;
+    ambient_signals?: string;
+    persona_count?: number;
+    center_x_pct?: number | null;
+    center_y_pct?: number | null;
+    polygon_points?: PolygonPoint[] | null;
+    fill_color?: string | null;
+    open_incident_count?: number;
     agents_here: Array<{
         agent_id: number;
         full_name: string;
@@ -269,8 +447,10 @@ export interface UrbanSimRunState {
         id: string;
         name: string;
         has_zone_map_image: boolean;
+        has_digital_map?: boolean;
         max_cost_usd_per_run: number;
     };
+    digital_map?: DigitalMapMeta;
     run: UrbanSimRun;
     sim_clock?: SimClockInfo;
     cost: LlmCostStats;
@@ -282,6 +462,8 @@ export interface UrbanSimRunState {
     };
     latest_seq: number;
     zones: ZoneTopologyCard[];
+    checkpoints?: UrbanSimCheckpoint[];
+    recent_movements?: RecentMovementEvent[];
     incidents: UrbanIncident[];
     agent_statuses: AgentStatusRow[];
 }
@@ -741,6 +923,11 @@ export function getZoneMapImageUrl(projectId: string, versionKey?: string): stri
     return versionKey ? `${base}?v=${encodeURIComponent(versionKey)}` : base;
 }
 
+export function getRunMapImageUrl(projectId: string, runId: string, versionKey?: string): string {
+    const base = `${API_BASE}/projects/${encodeURIComponent(projectId)}/runs/${encodeURIComponent(runId)}/map-image`;
+    return versionKey ? `${base}?v=${encodeURIComponent(versionKey)}` : base;
+}
+
 export interface RubricRoleRule {
     role_code: string;
     label: string;
@@ -857,10 +1044,124 @@ export const urbanSimApi = {
             body: JSON.stringify(payload || {}),
         });
     },
-    listZones: async (projectId: string): Promise<{ has_zone_map_image: boolean; items: UrbanSimZone[] }> => {
+    listAvailableSkills: async (): Promise<UrbanSimSkillOption[]> => {
+        const res = await requestJson<{ items: UrbanSimSkillOption[] }>(`${API_BASE}/available-skills`);
+        return res.items || [];
+    },
+    assignZonePersonas: async (
+        projectId: string,
+        zoneId: string,
+        personaIds: string[],
+        fallbackZoneKey?: string
+    ): Promise<{
+        zone: UrbanSimZone;
+        assigned_persona_ids: string[];
+        reassigned_out_count: number;
+        fallback_zone_key?: string | null;
+    }> => {
+        return requestJson(
+            `${API_BASE}/projects/${encodeURIComponent(projectId)}/zones/${encodeURIComponent(zoneId)}/personas`,
+            {
+                method: "PUT",
+                body: JSON.stringify({
+                    persona_ids: personaIds,
+                    fallback_zone_key: fallbackZoneKey || null,
+                }),
+            }
+        );
+    },
+    listZones: async (
+        projectId: string
+    ): Promise<{
+        has_zone_map_image: boolean;
+        has_digital_map?: boolean;
+        map_prompt?: string;
+        map_width?: number | null;
+        map_height?: number | null;
+        map_aspect_ratio?: number;
+        map_image_version?: number;
+        items: UrbanSimZone[];
+    }> => {
         return requestJson(`${API_BASE}/projects/${encodeURIComponent(projectId)}/zones`);
     },
-    uploadZoneMapImage: async (projectId: string, file: File): Promise<{ filename: string; size_bytes: number }> => {
+    createZone: async (
+        projectId: string,
+        payload: {
+            zone_key: string;
+            name: string;
+            zone_type: ZoneType;
+            description?: string;
+            ambient_signals?: string;
+            sort_order?: number;
+            center_x_pct?: number;
+            center_y_pct?: number;
+            polygon_points?: PolygonPoint[];
+            fill_color?: string;
+        }
+    ): Promise<UrbanSimZone> => {
+        const res = await requestJson<{ zone: UrbanSimZone }>(
+            `${API_BASE}/projects/${encodeURIComponent(projectId)}/zones`,
+            {
+                method: "POST",
+                body: JSON.stringify(payload),
+            }
+        );
+        return res.zone;
+    },
+    updateZone: async (
+        projectId: string,
+        zoneId: string,
+        payload: {
+            zone_key?: string;
+            name?: string;
+            zone_type?: ZoneType;
+            description?: string;
+            ambient_signals?: string;
+            sort_order?: number;
+            center_x_pct?: number;
+            center_y_pct?: number;
+            polygon_points?: PolygonPoint[] | null;
+            fill_color?: string;
+        }
+    ): Promise<UrbanSimZone> => {
+        const res = await requestJson<{ zone: UrbanSimZone }>(
+            `${API_BASE}/projects/${encodeURIComponent(projectId)}/zones/${encodeURIComponent(zoneId)}`,
+            {
+                method: "PATCH",
+                body: JSON.stringify(payload),
+            }
+        );
+        return res.zone;
+    },
+    deleteZone: async (
+        projectId: string,
+        zoneId: string,
+        reassignTo?: string,
+        clearOrphanedCheckpoints = false
+    ): Promise<{ deleted_id: string; reassigned_personas: number }> => {
+        const params = new URLSearchParams();
+        if (reassignTo) params.set("reassign_to", reassignTo);
+        if (clearOrphanedCheckpoints) params.set("clear_orphaned_checkpoints", "true");
+        const qs = params.toString() ? `?${params.toString()}` : "";
+        return requestJson<{ deleted_id: string; reassigned_personas: number }>(
+            `${API_BASE}/projects/${encodeURIComponent(projectId)}/zones/${encodeURIComponent(zoneId)}${qs}`,
+            {
+                method: "DELETE",
+            }
+        );
+    },
+    uploadZoneMapImage: async (
+        projectId: string,
+        file: File
+    ): Promise<{
+        filename: string;
+        size_bytes: number;
+        map_width?: number;
+        map_height?: number;
+        map_aspect_ratio?: number;
+        map_image_version?: number;
+        aspect_ratio_changed?: boolean;
+    }> => {
         const form = new FormData();
         form.append("file", file);
         return requestJson(`${API_BASE}/projects/${encodeURIComponent(projectId)}/zones/map-image`, {
@@ -868,10 +1169,194 @@ export const urbanSimApi = {
             body: form,
         });
     },
-    deleteZoneMapImage: async (projectId: string): Promise<void> => {
-        await requestJson(`${API_BASE}/projects/${encodeURIComponent(projectId)}/zones/map-image`, {
+    deleteZoneMapImage: async (
+        projectId: string,
+        clearOrphanedCheckpoints = false
+    ): Promise<void> => {
+        const qs = clearOrphanedCheckpoints ? "?clear_orphaned_checkpoints=true" : "";
+        await requestJson(`${API_BASE}/projects/${encodeURIComponent(projectId)}/zones/map-image${qs}`, {
             method: "DELETE",
         });
+    },
+    updateDigitalMapMeta: async (
+        projectId: string,
+        payload: { map_prompt?: string; map_aspect_ratio?: number }
+    ): Promise<UrbanSimProjectSummary> => {
+        const res = await requestJson<{ project: UrbanSimProjectSummary }>(
+            `${API_BASE}/projects/${encodeURIComponent(projectId)}/digital-map`,
+            {
+                method: "PATCH",
+                body: JSON.stringify(payload),
+            }
+        );
+        return res.project;
+    },
+    exportDigitalMapGeoJson: async (projectId: string): Promise<Record<string, unknown>> => {
+        return requestJson<Record<string, unknown>>(
+            `${API_BASE}/projects/${encodeURIComponent(projectId)}/digital-map/geojson`
+        );
+    },
+    generateDigitalMap: async (
+        projectId: string,
+        payload: { map_prompt: string; use_image?: boolean; max_zones?: number }
+    ): Promise<DigitalMapGenerateResponse> => {
+        return requestJson<DigitalMapGenerateResponse>(
+            `${API_BASE}/projects/${encodeURIComponent(projectId)}/digital-map/generate`,
+            {
+                method: "POST",
+                body: JSON.stringify(payload),
+            }
+        );
+    },
+    applyDigitalMap: async (
+        projectId: string,
+        payload: {
+            mode: "MERGE" | "REPLACE";
+            map_prompt?: string;
+            aspect_ratio?: number;
+            zones: GeneratedMapZoneDraft[];
+        }
+    ): Promise<{ has_digital_map: boolean; zones: UrbanSimZone[] }> => {
+        return requestJson<{ has_digital_map: boolean; zones: UrbanSimZone[] }>(
+            `${API_BASE}/projects/${encodeURIComponent(projectId)}/digital-map/apply`,
+            {
+                method: "POST",
+                body: JSON.stringify(payload),
+            }
+        );
+    },
+    saveZonesLayout: async (
+        projectId: string,
+        zones: Array<{
+            id: string;
+            polygon_points?: PolygonPoint[] | null;
+            center_x_pct?: number;
+            center_y_pct?: number;
+            fill_color?: string;
+        }>
+    ): Promise<{ updated_count: number }> => {
+        return requestJson<{ updated_count: number }>(
+            `${API_BASE}/projects/${encodeURIComponent(projectId)}/zones/layout`,
+            {
+                method: "PUT",
+                body: JSON.stringify({ zones }),
+            }
+        );
+    },
+    generateZoneFromPoint: async (
+        projectId: string,
+        payload: { center_x_pct: number; center_y_pct: number; prompt: string }
+    ): Promise<ZoneFromPointResponse> => {
+        return requestJson<ZoneFromPointResponse>(
+            `${API_BASE}/projects/${encodeURIComponent(projectId)}/zones/generate-from-point`,
+            {
+                method: "POST",
+                body: JSON.stringify(payload),
+            }
+        );
+    },
+    listCheckpoints: async (
+        projectId: string
+    ): Promise<{ has_digital_map: boolean; items: UrbanSimCheckpoint[] }> => {
+        return requestJson(
+            `${API_BASE}/projects/${encodeURIComponent(projectId)}/checkpoints`
+        );
+    },
+    createCheckpoint: async (
+        projectId: string,
+        payload: {
+            checkpoint_key?: string;
+            name: string;
+            x_pct: number;
+            y_pct: number;
+            icon_emoji?: string;
+            description_md?: string;
+            category?: CheckpointCategory;
+            sort_order?: number;
+        }
+    ): Promise<UrbanSimCheckpoint> => {
+        const res = await requestJson<{ checkpoint: UrbanSimCheckpoint }>(
+            `${API_BASE}/projects/${encodeURIComponent(projectId)}/checkpoints`,
+            {
+                method: "POST",
+                body: JSON.stringify(payload),
+            }
+        );
+        return res.checkpoint;
+    },
+    updateCheckpoint: async (
+        projectId: string,
+        checkpointId: string,
+        payload: {
+            checkpoint_key?: string;
+            name?: string;
+            x_pct?: number;
+            y_pct?: number;
+            icon_emoji?: string;
+            description_md?: string;
+            category?: CheckpointCategory;
+            sort_order?: number;
+        }
+    ): Promise<UrbanSimCheckpoint> => {
+        const res = await requestJson<{ checkpoint: UrbanSimCheckpoint }>(
+            `${API_BASE}/projects/${encodeURIComponent(projectId)}/checkpoints/${encodeURIComponent(checkpointId)}`,
+            {
+                method: "PATCH",
+                body: JSON.stringify(payload),
+            }
+        );
+        return res.checkpoint;
+    },
+    deleteCheckpoint: async (projectId: string, checkpointId: string): Promise<void> => {
+        await requestJson(
+            `${API_BASE}/projects/${encodeURIComponent(projectId)}/checkpoints/${encodeURIComponent(checkpointId)}`,
+            { method: "DELETE" }
+        );
+    },
+    saveCheckpointsLayout: async (
+        projectId: string,
+        checkpoints: Array<{ id: string; x_pct: number; y_pct: number }>
+    ): Promise<{ updated_count: number }> => {
+        return requestJson<{ updated_count: number }>(
+            `${API_BASE}/projects/${encodeURIComponent(projectId)}/checkpoints/layout`,
+            {
+                method: "PUT",
+                body: JSON.stringify({ checkpoints }),
+            }
+        );
+    },
+    generateCheckpoints: async (
+        projectId: string,
+        payload: { prompt: string; max_checkpoints?: number }
+    ): Promise<CheckpointsGenerateResponse> => {
+        return requestJson<CheckpointsGenerateResponse>(
+            `${API_BASE}/projects/${encodeURIComponent(projectId)}/checkpoints/generate`,
+            {
+                method: "POST",
+                body: JSON.stringify(payload),
+            }
+        );
+    },
+    applyCheckpointsBatch: async (
+        projectId: string,
+        checkpoints: Array<{
+            checkpoint_key: string;
+            name: string;
+            x_pct: number;
+            y_pct: number;
+            icon_emoji?: string;
+            description_md?: string;
+            category?: CheckpointCategory;
+            sort_order?: number;
+        }>
+    ): Promise<{ items: UrbanSimCheckpoint[] }> => {
+        return requestJson<{ items: UrbanSimCheckpoint[] }>(
+            `${API_BASE}/projects/${encodeURIComponent(projectId)}/checkpoints/apply-batch`,
+            {
+                method: "POST",
+                body: JSON.stringify({ checkpoints }),
+            }
+        );
     },
     listRuns: async (projectId: string): Promise<UrbanSimRun[]> => {
         const res = await requestJson<{ items: UrbanSimRun[] }>(`${API_BASE}/projects/${encodeURIComponent(projectId)}/runs`);

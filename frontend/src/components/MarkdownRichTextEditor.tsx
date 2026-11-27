@@ -46,6 +46,7 @@ export interface MarkdownRichTextEditorProps {
     defaultMode?: MarkdownEditorMode;
     disabled?: boolean;
     allowFullscreen?: boolean;
+    modalTitle?: string;
 }
 
 function getTextareaElement(ref: React.RefObject<TextAreaRef | null>): HTMLTextAreaElement | null {
@@ -71,6 +72,7 @@ export const MarkdownRichTextEditor: React.FC<MarkdownRichTextEditorProps> = ({
     defaultMode = "split",
     disabled = false,
     allowFullscreen = true,
+    modalTitle = "Soạn thảo Mô tả Kịch bản (Markdown RichText)",
 }) => {
     const screens = Grid.useBreakpoint();
     const isMobile = screens.md === false;
@@ -557,7 +559,7 @@ export const MarkdownRichTextEditor: React.FC<MarkdownRichTextEditorProps> = ({
             {allowFullscreen && (
                 <Modal
                     open={fullscreenOpen}
-                    title="Soạn thảo Mô tả Kịch bản (Markdown RichText)"
+                    title={modalTitle}
                     footer={[
                         <Button key="close" type="primary" onClick={() => setFullscreenOpen(false)}>
                             Xong

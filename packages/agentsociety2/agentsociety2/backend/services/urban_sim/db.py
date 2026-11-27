@@ -9,8 +9,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Iterator
 
-from sqlalchemy import event, text
-from sqlmodel import Field, Session, SQLModel, create_engine
+from sqlalchemy import UniqueConstraint, event, text
+from sqlmodel import Field, Session, SQLModel, create_engine, select
 
 _DB_LOCK = threading.Lock()
 _ENGINE_CACHE: dict[str, object] = {}
@@ -40,12 +40,58 @@ class UrbanSimProject(SQLModel, table=True):
     max_cost_usd_per_run: float = 5.0
     pilot_mode: bool = True
     zone_map_image_rel: str | None = None
+    map_prompt: str | None = None
+    map_width: int | None = None
+    map_height: int | None = None
+    map_aspect_ratio: float | None = None
+    map_image_version: int = 0
+    map_image_updated_at: str | None = None
     llm_config_id: str | None = None
     enable_sociological_debrief: bool = True
     enable_competency_prepost_quiz: bool = False
     competency_rubric_json: str | None = None
     created_at: str = Field(default_factory=_utcnow_iso)
     updated_at: str = Field(default_factory=_utcnow_iso)
+
+
+def resolve_default_persona_icon(
+    role_code: str = "",
+    group_type: str = "BQL",
+    full_name: str = "",
+) -> str:
+    """Return a readable default emoji icon matching the persona's role or resident profile."""
+    rc = (role_code or "").strip().upper()
+    gt = (group_type or "BQL").strip().upper()
+    name_low = (full_name or "").strip().lower()
+    if gt == "RESIDENT":
+        if any(tok in name_low for tok in ("bà ", "chị ", "cô ", "nữ")):
+            return "👩"
+        if any(tok in name_low for tok in ("ông ", "anh ", "chú ", "nam")):
+            return "👨"
+        return "🧑"
+    role_map = {
+        "BQL_DIRECTOR": "👔",
+        "BQL_ASSISTANT": "📋",
+        "BQL_RECEPTIONIST": "🛎️",
+        "SEC_LEAD": "🛡️",
+        "SEC_STAFF": "👮",
+        "ENG_LEAD": "👷",
+        "ENG_STAFF": "🔧",
+        "BQL_ACCOUNTANT": "🧮",
+        "CLEAN_STAFF": "🧹",
+        "HOUSEKEEPING": "🧹",
+    }
+    if rc in role_map:
+        return role_map[rc]
+    if "SEC" in rc or "AN_NINH" in rc:
+        return "👮"
+    if "ENG" in rc or "TECH" in rc or "KY_THUAT" in rc:
+        return "🔧"
+    if "ACCOUNT" in rc or "KE_TOAN" in rc:
+        return "🧮"
+    if "RECEPT" in rc or "LE_TAN" in rc:
+        return "🛎️"
+    return "🧑‍💼"
 
 
 class UrbanSimPersona(SQLModel, table=True):
@@ -63,11 +109,15 @@ class UrbanSimPersona(SQLModel, table=True):
     is_pilot_member: bool = False
     is_active: bool = True
     home_zone: str = "LOBBY_MAIN"
+    avatar_icon: str | None = None
     domain_knowledge_prompt: str = ""
     initial_tasks_json: str = "[]"
     portal_url: str | None = None
     login_username: str | None = None
     login_password_enc: str | None = None
+    default_activated_skill_ids_json: str | None = None
+    disabled_skill_ids_json: str | None = None
+    profile_traits_json: str | None = None
     created_at: str = Field(default_factory=_utcnow_iso)
     updated_at: str = Field(default_factory=_utcnow_iso)
 
@@ -104,9 +154,39 @@ class UrbanSimZone(SQLModel, table=True):
     project_id: str = Field(foreign_key="urban_sim_projects.id", index=True)
     zone_key: str = Field(index=True)
     name: str
-    zone_type: str = "OFFICE"  # "LOBBY" | "OFFICE" | "TECHNICAL" | "SECURITY" | "TOWER"
+    zone_type: str = "OFFICE"  # "LOBBY" | "OFFICE" | "TECHNICAL" | "SECURITY" | "TOWER" | "UTILITY" | "PARKING" | "COMMERCIAL" | "OTHER"
     description: str = ""
+    ambient_signals: str = ""
     sort_order: int = 0
+    center_x_pct: float | None = None
+    center_y_pct: float | None = None
+    polygon_points_json: str | None = None
+    fill_color: str | None = None
+
+
+class UrbanSimCheckpoint(SQLModel, table=True):
+    __tablename__ = "urban_sim_checkpoints"
+    __table_args__ = (
+        UniqueConstraint(
+            "project_id",
+            "checkpoint_key",
+            name="uq_urban_sim_checkpoints_project_key",
+        ),
+    )
+
+    id: str = Field(default_factory=lambda: _new_id("cp"), primary_key=True)
+    project_id: str = Field(foreign_key="urban_sim_projects.id", index=True)
+    checkpoint_key: str = Field(index=True)
+    name: str
+    x_pct: float
+    y_pct: float
+    icon_emoji: str = "📍"
+    description_md: str = ""
+    zone_key: str | None = Field(default=None, index=True)
+    category: str = "general"  # "security" | "facility" | "amenity" | "service" | "general"
+    sort_order: int = 0
+    created_at: str = Field(default_factory=_utcnow_iso)
+    updated_at: str = Field(default_factory=_utcnow_iso)
 
 
 class UrbanSimRun(SQLModel, table=True):
@@ -146,39 +226,135 @@ def resolve_db_path(workspace_root: Path | None = None) -> Path:
 
 
 def _ensure_urban_sim_migrations(engine) -> None:
-    """Idempotent SQLite schema migration for ``urban_sim_projects``."""
+    """Idempotent SQLite schema migration for ``urban_sim_projects``, ``urban_sim_zones`` & ``urban_sim_checkpoints``."""
     with Session(engine) as session:
         cols = {
             row[1]
             for row in session.exec(text("PRAGMA table_info(urban_sim_projects)")).all()
         }
-        if not cols:
-            return
         changed = False
-        if "llm_config_id" not in cols:
-            session.exec(text("ALTER TABLE urban_sim_projects ADD COLUMN llm_config_id TEXT"))
-            changed = True
-        if "enable_competency_prepost_quiz" not in cols:
+        if cols:
+            project_migrations = [
+                ("llm_config_id", "ALTER TABLE urban_sim_projects ADD COLUMN llm_config_id TEXT"),
+                (
+                    "enable_competency_prepost_quiz",
+                    "ALTER TABLE urban_sim_projects ADD COLUMN enable_competency_prepost_quiz INTEGER NOT NULL DEFAULT 0",
+                ),
+                (
+                    "enable_sociological_debrief",
+                    "ALTER TABLE urban_sim_projects ADD COLUMN enable_sociological_debrief INTEGER NOT NULL DEFAULT 1",
+                ),
+                (
+                    "competency_rubric_json",
+                    "ALTER TABLE urban_sim_projects ADD COLUMN competency_rubric_json TEXT",
+                ),
+                ("map_prompt", "ALTER TABLE urban_sim_projects ADD COLUMN map_prompt TEXT"),
+                ("map_width", "ALTER TABLE urban_sim_projects ADD COLUMN map_width INTEGER"),
+                ("map_height", "ALTER TABLE urban_sim_projects ADD COLUMN map_height INTEGER"),
+                ("map_aspect_ratio", "ALTER TABLE urban_sim_projects ADD COLUMN map_aspect_ratio REAL"),
+                (
+                    "map_image_version",
+                    "ALTER TABLE urban_sim_projects ADD COLUMN map_image_version INTEGER NOT NULL DEFAULT 0",
+                ),
+                (
+                    "map_image_updated_at",
+                    "ALTER TABLE urban_sim_projects ADD COLUMN map_image_updated_at TEXT",
+                ),
+            ]
+            for col_name, ddl in project_migrations:
+                if col_name not in cols:
+                    session.exec(text(ddl))
+                    changed = True
+
+        zone_cols = {
+            row[1]
+            for row in session.exec(text("PRAGMA table_info(urban_sim_zones)")).all()
+        }
+        if zone_cols:
+            zone_migrations = [
+                (
+                    "ambient_signals",
+                    "ALTER TABLE urban_sim_zones ADD COLUMN ambient_signals TEXT NOT NULL DEFAULT ''",
+                ),
+                ("center_x_pct", "ALTER TABLE urban_sim_zones ADD COLUMN center_x_pct REAL"),
+                ("center_y_pct", "ALTER TABLE urban_sim_zones ADD COLUMN center_y_pct REAL"),
+                (
+                    "polygon_points_json",
+                    "ALTER TABLE urban_sim_zones ADD COLUMN polygon_points_json TEXT",
+                ),
+                ("fill_color", "ALTER TABLE urban_sim_zones ADD COLUMN fill_color TEXT"),
+            ]
+            for col_name, ddl in zone_migrations:
+                if col_name not in zone_cols:
+                    session.exec(text(ddl))
+                    changed = True
+
+        persona_cols = {
+            row[1]
+            for row in session.exec(text("PRAGMA table_info(urban_sim_personas)")).all()
+        }
+        if persona_cols:
+            persona_migrations = [
+                (
+                    "default_activated_skill_ids_json",
+                    "ALTER TABLE urban_sim_personas ADD COLUMN default_activated_skill_ids_json TEXT",
+                ),
+                (
+                    "disabled_skill_ids_json",
+                    "ALTER TABLE urban_sim_personas ADD COLUMN disabled_skill_ids_json TEXT",
+                ),
+                (
+                    "profile_traits_json",
+                    "ALTER TABLE urban_sim_personas ADD COLUMN profile_traits_json TEXT",
+                ),
+                (
+                    "avatar_icon",
+                    "ALTER TABLE urban_sim_personas ADD COLUMN avatar_icon TEXT",
+                ),
+            ]
+            for col_name, ddl in persona_migrations:
+                if col_name not in persona_cols:
+                    session.exec(text(ddl))
+                    changed = True
+
+        cp_cols = {
+            row[1]
+            for row in session.exec(text("PRAGMA table_info(urban_sim_checkpoints)")).all()
+        }
+        if cp_cols:
             session.exec(
                 text(
-                    "ALTER TABLE urban_sim_projects "
-                    "ADD COLUMN enable_competency_prepost_quiz INTEGER NOT NULL DEFAULT 0"
+                    "CREATE UNIQUE INDEX IF NOT EXISTS uq_urban_sim_checkpoints_project_key "
+                    "ON urban_sim_checkpoints(project_id, checkpoint_key)"
                 )
             )
             changed = True
-        if "enable_sociological_debrief" not in cols:
-            session.exec(
-                text(
-                    "ALTER TABLE urban_sim_projects "
-                    "ADD COLUMN enable_sociological_debrief INTEGER NOT NULL DEFAULT 1"
+
+        # Idempotently backfill MulberryLane default zone signals & digital map geometry when missing
+        if zone_cols:
+            ml_proj = session.exec(
+                select(UrbanSimProject).where(UrbanSimProject.slug == "mulberrylane")
+            ).first()
+            if ml_proj is not None:
+                from agentsociety2.backend.services.urban_sim.seed_mulberrylane import (
+                    MULBERRYLANE_ZONES,
+                    backfill_mulberrylane_digital_map,
                 )
-            )
-            changed = True
-        if "competency_rubric_json" not in cols:
-            session.exec(
-                text("ALTER TABLE urban_sim_projects ADD COLUMN competency_rubric_json TEXT")
-            )
-            changed = True
+
+                ml_zones = session.exec(
+                    select(UrbanSimZone).where(UrbanSimZone.project_id == ml_proj.id)
+                ).all()
+                if ml_zones and all(not (mz.ambient_signals or "").strip() for mz in ml_zones):
+                    sig_by_key = {item[0]: item[5] for item in MULBERRYLANE_ZONES if len(item) > 5}
+                    for mz in ml_zones:
+                        if mz.zone_key in sig_by_key:
+                            mz.ambient_signals = sig_by_key[mz.zone_key]
+                            session.add(mz)
+                    changed = True
+
+                if backfill_mulberrylane_digital_map(session, ml_proj):
+                    changed = True
+
         if changed:
             session.commit()
 

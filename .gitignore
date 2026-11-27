@@ -29,7 +29,7 @@ packages/agentsociety2/junit.xml
 # Virtual environments
 .venv/
 venv/
-ENV/
+/ENV/
 /env/
 packages/agentsociety2/venv/
 venv_arm/

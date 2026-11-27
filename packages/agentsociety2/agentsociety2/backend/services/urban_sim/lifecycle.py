@@ -22,6 +22,7 @@ from agentsociety2.backend.path_security import (
 from agentsociety2.backend.services.urban_sim.compiler import compile_run_from_db
 from agentsociety2.backend.services.urban_sim.db import (
     UrbanSimAtlasConfig,
+    UrbanSimCheckpoint,
     UrbanSimPersona,
     UrbanSimProject,
     UrbanSimRun,
@@ -382,6 +383,11 @@ class UrbanSimLifecycleManager:
                 zones = session.exec(
                     select(UrbanSimZone).where(UrbanSimZone.project_id == project_id)
                 ).all()
+                checkpoints = session.exec(
+                    select(UrbanSimCheckpoint)
+                    .where(UrbanSimCheckpoint.project_id == project_id)
+                    .order_by(UrbanSimCheckpoint.sort_order, UrbanSimCheckpoint.name)  # type: ignore[arg-type]
+                ).all()
                 prev_runs = session.exec(
                     select(UrbanSimRun).where(UrbanSimRun.project_id == project_id)
                 ).all()
@@ -395,6 +401,7 @@ class UrbanSimLifecycleManager:
                         personas=list(personas),
                         atlas=atlas,
                         zones=list(zones),
+                        checkpoints=list(checkpoints),
                         run_dir=run_dir,
                         workspace_root=ws,
                     )

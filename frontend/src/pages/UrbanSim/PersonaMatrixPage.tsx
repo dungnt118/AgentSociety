@@ -6,6 +6,7 @@ import {
     LockOutlined,
     PlusOutlined,
     SearchOutlined,
+    ThunderboltOutlined,
     WarningOutlined,
 } from "@ant-design/icons";
 import {
@@ -35,14 +36,59 @@ import type { ColumnsType } from "antd/es/table";
 import React, { useCallback, useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router";
 import {
+    PersonaProfileTraits,
     urbanSimApi,
     UrbanSimPersona,
     UrbanSimProjectSummary,
+    UrbanSimSkillOption,
     UrbanSimZone,
 } from "../../services/urbanSimApi";
 
 const { Title, Text } = Typography;
 const { TextArea } = Input;
+
+const PERSONALITY_TAG_SUGGESTIONS = [
+    "Cẩn thận",
+    "Nhiệt tình",
+    "Nghiêm túc",
+    "Khó tính",
+    "Chu đáo",
+    "Kỹ tính",
+    "Nhanh nhẹn",
+    "Ưa sạch sẽ",
+    "Hay giao lưu",
+    "Thích thể thao",
+];
+
+const PERSONA_ICON_PRESETS = [
+    "👔", "📋", "🛎️", "🛡️", "👮", "👷", "🔧", "🧮",
+    "🧹", "🧑‍💼", "🧑", "👨", "👩", "🏃", "🚴", "🐕",
+];
+
+function resolveDefaultPersonaIconFE(roleCode = "", groupType = "BQL", fullName = ""): string {
+    const rc = roleCode.toUpperCase();
+    const low = fullName.toLowerCase();
+    if (groupType === "RESIDENT") {
+        if (low.includes("bà ") || low.includes("chị ") || low.includes("cô ")) return "👩";
+        if (low.includes("ông ") || low.includes("anh ") || low.includes("chú ")) return "👨";
+        return "🧑";
+    }
+    const map: Record<string, string> = {
+        BQL_DIRECTOR: "👔",
+        BQL_ASSISTANT: "📋",
+        BQL_RECEPTIONIST: "🛎️",
+        SEC_LEAD: "🛡️",
+        SEC_STAFF: "👮",
+        ENG_LEAD: "👷",
+        ENG_STAFF: "🔧",
+        BQL_ACCOUNTANT: "🧮",
+    };
+    if (map[rc]) return map[rc];
+    if (rc.includes("SEC")) return "👮";
+    if (rc.includes("ENG") || rc.includes("TECH")) return "🔧";
+    if (rc.includes("ACCOUNT")) return "🧮";
+    return "🧑‍💼";
+}
 
 interface PersonaFormValues {
     agent_id?: number;
@@ -55,12 +101,22 @@ interface PersonaFormValues {
     is_pilot_member: boolean;
     is_active: boolean;
     home_zone: string;
+    avatar_icon?: string;
     portal_url?: string;
     login_username?: string;
     login_password?: string;
     clear_password?: boolean;
     domain_knowledge_prompt: string;
     initial_tasks_text: string;
+    default_activated_skill_ids?: string[];
+    disabled_skill_ids?: string[];
+    trait_age?: number | null;
+    trait_gender?: string;
+    trait_occupation?: string;
+    trait_personality_tags?: string[];
+    trait_communication_style?: string;
+    trait_daily_routine?: string;
+    trait_background_story?: string;
 }
 
 export default function PersonaMatrixPage() {
@@ -73,6 +129,7 @@ export default function PersonaMatrixPage() {
     const [project, setProject] = useState<UrbanSimProjectSummary | null>(null);
     const [personas, setPersonas] = useState<UrbanSimPersona[]>([]);
     const [zones, setZones] = useState<UrbanSimZone[]>([]);
+    const [availableSkills, setAvailableSkills] = useState<UrbanSimSkillOption[]>([]);
     const [groupFilter, setGroupFilter] = useState<"ALL" | "BQL" | "RESIDENT">("ALL");
     const [searchText, setSearchText] = useState("");
     const [drawerOpen, setDrawerOpen] = useState(false);
@@ -83,14 +140,16 @@ export default function PersonaMatrixPage() {
 
     const reloadData = useCallback(async () => {
         if (!projectId) return;
-        const [proj, perList, zoneRes] = await Promise.all([
+        const [proj, perList, zoneRes, skillList] = await Promise.all([
             urbanSimApi.getProject(projectId),
             urbanSimApi.listPersonas(projectId),
             urbanSimApi.listZones(projectId),
+            urbanSimApi.listAvailableSkills().catch(() => []),
         ]);
         setProject(proj);
         setPersonas(perList);
         setZones(zoneRes.items || []);
+        setAvailableSkills(skillList);
     }, [projectId]);
 
     useEffect(() => {
@@ -100,7 +159,7 @@ export default function PersonaMatrixPage() {
                 await reloadData();
             } catch (err) {
                 if (active) {
-                    message.error(err instanceof Error ? err.message : "Không tải được danh sách Persona");
+                    message.error(err instanceof Error ? err.message : "Không tải được danh sách Nhân sự & Cư dân");
                 }
             } finally {
                 if (active) setLoading(false);
@@ -115,6 +174,12 @@ export default function PersonaMatrixPage() {
     const openEditDrawer = (persona: UrbanSimPersona | null) => {
         setEditing(persona);
         if (persona) {
+            const traits = persona.profile_traits || {};
+            const defaultActivated =
+                persona.default_activated_skill_ids ??
+                (persona.group_type === "BQL" && persona.software_access_enabled
+                    ? ["env:DemegoWebPortalEnv@bql-qltn-ops-vn"]
+                    : ["env:UrbanCommAndIncidentEnv@urban-resident-vn"]);
             form.setFieldsValue({
                 agent_id: persona.agent_id,
                 full_name: persona.full_name,
@@ -126,12 +191,24 @@ export default function PersonaMatrixPage() {
                 is_pilot_member: persona.is_pilot_member,
                 is_active: persona.is_active,
                 home_zone: persona.home_zone,
+                avatar_icon:
+                    persona.avatar_icon ||
+                    resolveDefaultPersonaIconFE(persona.role_code, persona.group_type, persona.full_name),
                 portal_url: persona.portal_url || "",
                 login_username: persona.login_username || "",
                 login_password: "",
                 clear_password: false,
                 domain_knowledge_prompt: persona.domain_knowledge_prompt,
                 initial_tasks_text: (persona.initial_tasks || []).join("\n"),
+                default_activated_skill_ids: defaultActivated,
+                disabled_skill_ids: persona.disabled_skill_ids || [],
+                trait_age: traits.age ?? null,
+                trait_gender: traits.gender || undefined,
+                trait_occupation: traits.occupation || "",
+                trait_personality_tags: traits.personality_tags || [],
+                trait_communication_style: traits.communication_style || "",
+                trait_daily_routine: traits.daily_routine || "",
+                trait_background_story: traits.background_story || "",
             });
         } else {
             form.setFieldsValue({
@@ -143,13 +220,23 @@ export default function PersonaMatrixPage() {
                 software_access_enabled: true,
                 is_pilot_member: false,
                 is_active: true,
-                home_zone: zones[0]?.zone_key || "LOBBY_MAIN",
+                home_zone: zones[0]?.zone_key || "",
+                avatar_icon: "🧑‍💼",
                 portal_url: project?.default_portal_url || "",
                 login_username: "",
                 login_password: "",
                 clear_password: false,
                 domain_knowledge_prompt: "",
                 initial_tasks_text: "",
+                default_activated_skill_ids: ["env:DemegoWebPortalEnv@bql-qltn-ops-vn"],
+                disabled_skill_ids: [],
+                trait_age: null,
+                trait_gender: undefined,
+                trait_occupation: "",
+                trait_personality_tags: [],
+                trait_communication_style: "",
+                trait_daily_routine: "",
+                trait_background_story: "",
             });
         }
         setDrawerOpen(true);
@@ -162,20 +249,54 @@ export default function PersonaMatrixPage() {
             .split("\n")
             .map((s) => s.trim())
             .filter(Boolean);
+        const swEnabled = values.group_type === "RESIDENT" ? false : Boolean(values.software_access_enabled);
+        const activatedSkills = (values.default_activated_skill_ids || []).filter(
+            (sid) => swEnabled || sid !== "env:DemegoWebPortalEnv@bql-qltn-ops-vn"
+        );
+        const disabledSkills = (values.disabled_skill_ids || []).filter(
+            (sid) => !activatedSkills.includes(sid)
+        );
+        const profileTraits: PersonaProfileTraits = {};
+        if (typeof values.trait_age === "number" && Number.isFinite(values.trait_age)) {
+            profileTraits.age = values.trait_age;
+        }
+        if (values.trait_gender && values.trait_gender.trim()) {
+            profileTraits.gender = values.trait_gender.trim();
+        }
+        if (values.trait_occupation && values.trait_occupation.trim()) {
+            profileTraits.occupation = values.trait_occupation.trim();
+        }
+        if (values.trait_personality_tags && values.trait_personality_tags.length > 0) {
+            profileTraits.personality_tags = values.trait_personality_tags;
+        }
+        if (values.trait_communication_style && values.trait_communication_style.trim()) {
+            profileTraits.communication_style = values.trait_communication_style.trim();
+        }
+        if (values.trait_daily_routine && values.trait_daily_routine.trim()) {
+            profileTraits.daily_routine = values.trait_daily_routine.trim();
+        }
+        if (values.trait_background_story && values.trait_background_story.trim()) {
+            profileTraits.background_story = values.trait_background_story.trim();
+        }
+
         const payload: Record<string, unknown> = {
             full_name: values.full_name,
             role_code: values.role_code,
             role_title: values.role_title,
             department: values.department,
             group_type: values.group_type,
-            software_access_enabled: values.group_type === "RESIDENT" ? false : values.software_access_enabled,
+            software_access_enabled: swEnabled,
             is_pilot_member: values.is_pilot_member,
             is_active: values.is_active,
             home_zone: values.home_zone,
+            avatar_icon: (values.avatar_icon || "").trim() || undefined,
             portal_url: (values.portal_url ?? "").trim(),
             login_username: (values.login_username ?? "").trim(),
             domain_knowledge_prompt: values.domain_knowledge_prompt,
             initial_tasks: tasks,
+            default_activated_skill_ids: activatedSkills,
+            disabled_skill_ids: disabledSkills,
+            profile_traits: Object.keys(profileTraits).length > 0 ? profileTraits : {},
         };
         if (values.clear_password) {
             payload.clear_password = true;
@@ -258,8 +379,15 @@ export default function PersonaMatrixPage() {
             title: "ID",
             dataIndex: "agent_id",
             key: "agent_id",
-            width: 64,
-            render: (id: number) => <Text strong>#{id}</Text>,
+            width: 78,
+            render: (id: number, p: UrbanSimPersona) => (
+                <Space size={4}>
+                    <span style={{ fontSize: 16 }}>
+                        {p.avatar_icon || resolveDefaultPersonaIconFE(p.role_code, p.group_type, p.full_name)}
+                    </span>
+                    <Text strong>#{id}</Text>
+                </Space>
+            ),
         },
         {
             title: "Họ tên & Chức danh",
@@ -276,14 +404,32 @@ export default function PersonaMatrixPage() {
         {
             title: "Nhóm & Khu vực",
             key: "group",
-            render: (_, p) => (
-                <Space direction="vertical" size={2}>
-                    <Tag color={p.group_type === "BQL" ? "blue" : "purple"}>
-                        {p.group_type === "BQL" ? "Ban Quản lý (BQL)" : "Cư dân Chủ hộ"}
-                    </Tag>
-                    <Text type="secondary" style={{ fontSize: 11 }}>{p.home_zone}</Text>
-                </Space>
-            ),
+            render: (_, p) => {
+                const traits = p.profile_traits || {};
+                const customSkillCount = (p.default_activated_skill_ids || []).length;
+                return (
+                    <Space direction="vertical" size={2}>
+                        <Tag color={p.group_type === "BQL" ? "blue" : "purple"}>
+                            {p.group_type === "BQL" ? "Ban Quản lý (BQL)" : "Cư dân Chủ hộ"}
+                        </Tag>
+                        <Text type="secondary" style={{ fontSize: 11 }}>
+                            Khu vực: {p.home_zone}
+                        </Text>
+                        <Space wrap size={4}>
+                            {customSkillCount > 0 && (
+                                <Tag color="cyan" icon={<ThunderboltOutlined />} style={{ fontSize: 11, marginInlineEnd: 0 }}>
+                                    {customSkillCount} kỹ năng
+                                </Tag>
+                            )}
+                            {(traits.personality_tags || []).slice(0, 2).map((tag) => (
+                                <Tag key={tag} style={{ fontSize: 11, marginInlineEnd: 0 }}>
+                                    {tag}
+                                </Tag>
+                            ))}
+                        </Space>
+                    </Space>
+                );
+            },
         },
         {
             title: "Phần mềm QLTN & Tài khoản",
@@ -497,8 +643,9 @@ export default function PersonaMatrixPage() {
                             </Form.Item>
                         </Col>
                         <Col xs={24} sm={12}>
-                            <Form.Item name="home_zone" label="Khu vực (Zone mặc định)">
+                            <Form.Item name="home_zone" label="Khu vực mặc định">
                                 <Select
+                                    placeholder="Chọn khu vực từ Sơ đồ Khu đô thị"
                                     options={zones.map((z) => ({ value: z.zone_key, label: `${z.name} (${z.zone_key})` }))}
                                 />
                             </Form.Item>
@@ -512,6 +659,22 @@ export default function PersonaMatrixPage() {
                             <Form.Item name="department" label="Phòng ban / Tòa">
                                 <Input />
                             </Form.Item>
+                        </Col>
+                        <Col xs={24}>
+                            <Form.Item name="avatar_icon" label="Icon đại diện trên Bản đồ Số (thay cho badge số)">
+                                <Input style={{ width: 120 }} placeholder="vd: 👮" />
+                            </Form.Item>
+                            <Space wrap size={4} style={{ marginTop: -8, marginBottom: 12 }}>
+                                {PERSONA_ICON_PRESETS.map((ic) => (
+                                    <Button
+                                        key={ic}
+                                        size="small"
+                                        onClick={() => form.setFieldValue("avatar_icon", ic)}
+                                    >
+                                        {ic}
+                                    </Button>
+                                ))}
+                            </Space>
                         </Col>
                     </Row>
 
@@ -567,6 +730,121 @@ export default function PersonaMatrixPage() {
                             </Form.Item>
                         </Col>
                     </Row>
+
+                    <Card
+                        size="small"
+                        title={
+                            <Space>
+                                <ThunderboltOutlined />
+                                <span>Kỹ năng Agent từ Kho /skills</span>
+                            </Space>
+                        }
+                        extra={
+                            <Button type="link" size="small" onClick={() => navigate("/skills")}>
+                                Mở Kho Kỹ năng (/skills)
+                            </Button>
+                        }
+                        style={{ marginBottom: 12 }}
+                    >
+                        <Form.Item noStyle shouldUpdate={(prev, cur) => prev.group_type !== cur.group_type || prev.software_access_enabled !== cur.software_access_enabled}>
+                            {({ getFieldValue }) => {
+                                const isSwAllowed = getFieldValue("group_type") !== "RESIDENT" && Boolean(getFieldValue("software_access_enabled"));
+                                const skillOpts = availableSkills.map((sk) => ({
+                                    value: sk.skill_id,
+                                    label: `${sk.name} [${sk.source_label}]${sk.requires_software_access && !isSwAllowed ? " (Khóa — cần quyền QLTN)" : ""}`,
+                                    disabled: sk.requires_software_access && !isSwAllowed,
+                                }));
+                                return (
+                                    <>
+                                        <Form.Item
+                                            name="default_activated_skill_ids"
+                                            label="Kỹ năng kích hoạt mặc định cho nhân vật"
+                                            extra="Các kỹ năng (SKILL.md) đã chọn sẽ được nạp thẳng vào Agent khi chạy mô phỏng."
+                                        >
+                                            <Select
+                                                mode="multiple"
+                                                allowClear
+                                                showSearch
+                                                optionFilterProp="label"
+                                                placeholder="Chọn kỹ năng từ /skills hoặc kỹ năng vai trò"
+                                                options={skillOpts}
+                                            />
+                                        </Form.Item>
+                                        <Form.Item
+                                            name="disabled_skill_ids"
+                                            label="Kỹ năng tắt (không dùng)"
+                                            style={{ marginBottom: 0 }}
+                                        >
+                                            <Select
+                                                mode="multiple"
+                                                allowClear
+                                                showSearch
+                                                optionFilterProp="label"
+                                                placeholder="Chọn kỹ năng cần tắt với nhân vật này (nếu có)"
+                                                options={availableSkills.map((sk) => ({
+                                                    value: sk.skill_id,
+                                                    label: `${sk.name} [${sk.source_label}]`,
+                                                }))}
+                                            />
+                                        </Form.Item>
+                                    </>
+                                );
+                            }}
+                        </Form.Item>
+                    </Card>
+
+                    <Card size="small" title="Đặc tính cá nhân & Thói quen (Profile Traits)" style={{ marginBottom: 12 }}>
+                        <Row gutter={12}>
+                            <Col xs={12} sm={8}>
+                                <Form.Item name="trait_age" label="Tuổi">
+                                    <InputNumber min={6} max={100} style={{ width: "100%" }} placeholder="vd: 34" />
+                                </Form.Item>
+                            </Col>
+                            <Col xs={12} sm={8}>
+                                <Form.Item name="trait_gender" label="Giới tính">
+                                    <Select
+                                        allowClear
+                                        placeholder="Chọn"
+                                        options={[
+                                            { value: "Nam", label: "Nam" },
+                                            { value: "Nữ", label: "Nữ" },
+                                            { value: "Khác", label: "Khác" },
+                                        ]}
+                                    />
+                                </Form.Item>
+                            </Col>
+                            <Col xs={24} sm={8}>
+                                <Form.Item name="trait_occupation" label="Nghề nghiệp">
+                                    <Input placeholder="vd: Kỹ sư phần mềm" />
+                                </Form.Item>
+                            </Col>
+                            <Col xs={24}>
+                                <Form.Item name="trait_personality_tags" label="Thẻ tính cách (chọn hoặc tự nhập)">
+                                    <Select
+                                        mode="tags"
+                                        allowClear
+                                        placeholder="vd: Cẩn thận, Khó tính, Thích thể thao..."
+                                        options={PERSONALITY_TAG_SUGGESTIONS.map((t) => ({ value: t, label: t }))}
+                                    />
+                                </Form.Item>
+                            </Col>
+                            <Col xs={24} sm={12}>
+                                <Form.Item name="trait_communication_style" label="Phong cách giao tiếp">
+                                    <Input placeholder="vd: Thẳng thắn, đòi hỏi xử lý nhanh" />
+                                </Form.Item>
+                            </Col>
+                            <Col xs={24} sm={12}>
+                                <Form.Item name="trait_daily_routine" label="Thói quen theo khung giờ">
+                                    <Input placeholder="vd: Sáng 07:00 chạy bộ, Tối 19:00 bơi/BBQ" />
+                                </Form.Item>
+                            </Col>
+                            <Col xs={24}>
+                                <Form.Item name="trait_background_story" label="Hoàn cảnh / Tiểu sử chi tiết" style={{ marginBottom: 0 }}>
+                                    <TextArea rows={2} placeholder="Mô tả bối cảnh sống, gia đình, mối quan tâm nổi bật của nhân vật..." />
+                                </Form.Item>
+                            </Col>
+                        </Row>
+                    </Card>
 
                     <Form.Item name="domain_knowledge_prompt" label="Kiến thức nghiệp vụ chuyên môn (KHÔNG chứa hướng dẫn phần mềm)">
                         <TextArea rows={4} />

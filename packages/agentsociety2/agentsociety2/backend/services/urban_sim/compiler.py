@@ -5,12 +5,14 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import yaml
 
+from agentsociety2.backend.path_security import resolve_urban_sim_map_image
 from agentsociety2.backend.services.urban_sim.competency import (
     DEBRIEF_QUESTIONNAIRE_ID,
     QUIZ_POST_ID,
@@ -25,27 +27,127 @@ from agentsociety2.backend.services.urban_sim.crypto import (
 )
 from agentsociety2.backend.services.urban_sim.db import (
     UrbanSimAtlasConfig,
+    UrbanSimCheckpoint,
     UrbanSimPersona,
     UrbanSimProject,
     UrbanSimZone,
+    get_engine,
+    resolve_default_persona_icon,
 )
+from agentsociety2.backend.services.urban_sim.map_generator import parse_polygon_json
 from agentsociety2.storage.workspace_state import atomic_write_text
 
-URBAN_SIM_BASE_RULES = """<identity>
-Bạn là một nhân sự hoặc cư dân người Việt đang sống và làm việc thực tế trong khu đô thị chung cư MulberryLane (không phải trợ lý AI). Hãy giữ đúng vai trò, tính cách, thông tin hồ sơ thực tế và nguyên tắc nghiệp vụ trong thẻ <agent>. Toàn bộ suy nghĩ (`thought`), ghi nhớ (`memories`), tin nhắn và câu hỏi BẮT BUỘC viết bằng 100% Tiếng Việt chuẩn tự nhiên (tuyệt đối không chêm từ ngoại ngữ như tiếng Nga, tiếng Hindi, tiếng Trung hoặc từ kỹ thuật lẫn lộn).
+def _parse_optional_skill_ids(raw: str | None) -> list[str] | None:
+    if raw is None:
+        return None
+    try:
+        parsed = json.loads(raw)
+        if isinstance(parsed, list):
+            return [str(x).strip() for x in parsed if str(x).strip()]
+    except (ValueError, TypeError):
+        pass
+    return None
+
+
+def _parse_profile_traits(raw: str | None) -> dict[str, Any]:
+    if not raw:
+        return {}
+    try:
+        parsed = json.loads(raw)
+        return parsed if isinstance(parsed, dict) else {}
+    except (ValueError, TypeError):
+        return {}
+
+
+def _format_profile_traits_block(traits: dict[str, Any]) -> str:
+    if not traits:
+        return ""
+    lines: list[str] = []
+    if traits.get("age") is not None:
+        lines.append(f"- Tuổi: {traits['age']}")
+    if str(traits.get("gender") or "").strip():
+        lines.append(f"- Giới tính: {str(traits['gender']).strip()}")
+    if str(traits.get("occupation") or "").strip():
+        lines.append(f"- Nghề nghiệp / Bối cảnh: {str(traits['occupation']).strip()}")
+    tags = traits.get("personality_tags")
+    if isinstance(tags, list) and tags:
+        lines.append(f"- Tính cách nổi bật: {', '.join(str(t).strip() for t in tags if str(t).strip())}")
+    elif isinstance(tags, str) and tags.strip():
+        lines.append(f"- Tính cách nổi bật: {tags.strip()}")
+    if str(traits.get("communication_style") or "").strip():
+        lines.append(f"- Phong cách giao tiếp: {str(traits['communication_style']).strip()}")
+    if str(traits.get("daily_routine") or "").strip():
+        lines.append(f"- Thói quen sinh hoạt / lịch trình: {str(traits['daily_routine']).strip()}")
+    if str(traits.get("background_story") or "").strip():
+        lines.append(f"- Hoàn cảnh / Tiểu sử: {str(traits['background_story']).strip()}")
+    if not lines:
+        return ""
+    return "\nHồ sơ & Đặc tính cá nhân:\n" + "\n".join(lines)
+
+
+def _resolve_persona_skills(p: UrbanSimPersona) -> tuple[list[str], list[str]]:
+    """Tính toán danh sách Skill kích hoạt mặc định & Skill tắt của từng Persona (bảo toàn bất biến QLTN)."""
+    bql_qltn_skill = "env:DemegoWebPortalEnv@bql-qltn-ops-vn"
+    resident_skill = "env:UrbanCommAndIncidentEnv@urban-resident-vn"
+
+    custom_activated = _parse_optional_skill_ids(getattr(p, "default_activated_skill_ids_json", None))
+    custom_disabled = _parse_optional_skill_ids(getattr(p, "disabled_skill_ids_json", None))
+
+    if custom_activated is None:
+        activated = [bql_qltn_skill] if p.software_access_enabled else [resident_skill]
+    else:
+        activated = list(dict.fromkeys(custom_activated))
+
+    if custom_disabled is None:
+        disabled: list[str] = []
+        for candidate in (
+            "built-in@daily-guidance",
+            "custom@my-custom-skill",
+            resident_skill if p.software_access_enabled else bql_qltn_skill,
+        ):
+            if candidate not in activated:
+                disabled.append(candidate)
+    else:
+        disabled = [s for s in dict.fromkeys(custom_disabled) if s not in activated]
+
+    # Security invariant: non-software Personas / Residents MUST NEVER activate BQL QLTN ops skill
+    if not p.software_access_enabled:
+        activated = [s for s in activated if s != bql_qltn_skill]
+        if bql_qltn_skill not in disabled:
+            disabled.append(bql_qltn_skill)
+
+    return activated, disabled
+
+
+def build_urban_sim_base_rules(
+    *,
+    project_name: str = "Khu đô thị",
+    receptionist_id: int | None = None,
+    default_portal_url: str = "",
+) -> str:
+    """Sinh block base_rules đồng nhất byte cho toàn bộ agent trong cùng Run (giữ Prefix Cache)."""
+    proj_label = str(project_name or "Khu đô thị").strip()
+    rec_ref = f"Lễ tân (`agent_id={receptionist_id}`)" if receptionist_id is not None else "Lễ tân (`bql_contacts`)"
+    rec_call = f"`recipient_agent_id={receptionist_id}`" if receptionist_id is not None else "ID Lễ tân trong `building_context.autonomy_guidance` / `bql_contacts`"
+    rec_msg = f"`agent_id={receptionist_id}`" if receptionist_id is not None else "ID Lễ tân trong `bql_contacts`"
+    portal_hint = f" ({default_portal_url.strip()})" if default_portal_url and default_portal_url.strip() else ""
+
+    return f"""<identity>
+Bạn là một nhân sự hoặc cư dân người Việt đang sống và làm việc thực tế tại {proj_label} (không phải trợ lý AI). Hãy giữ đúng vai trò, tính cách, thông tin hồ sơ thực tế và nguyên tắc nghiệp vụ trong thẻ <agent>. Toàn bộ suy nghĩ (`thought`), ghi nhớ (`memories`), tin nhắn và câu hỏi BẮT BUỘC viết bằng 100% Tiếng Việt chuẩn tự nhiên (tuyệt đối không chêm từ ngoại ngữ như tiếng Nga, tiếng Hindi, tiếng Trung hoặc từ kỹ thuật lẫn lộn).
 - QUY TẮC BẮT BUỘC VỀ `readonly` KHI GỌI `ask_env`:
   + CHỈ đặt `readonly=true` khi bạn thuần túy chỉ muốn đọc/quan sát (`observe_urban_inbox`, `observe_web_portal`).
-  + BẮT BUỘC đặt **`readonly=false`** mỗi khi gọi bất kỳ hành động nào: `login_qltn_portal`, `click_web_text`, `click_web_element`, `fill_web_input`, `select_web_option`, `navigate_web_path`, `ask_atlas_support`, `report_resident_incident`, `send_urban_message`, `manage_incident`, `move_to_zone`. TUYỆT ĐỐI KHÔNG gộp lệnh "quan sát rồi đăng nhập/bấm/hỏi/gửi tin" trong `ask_env(..., readonly=true)`.
-- Nếu bạn là Nhân sự Ban Quản lý (`BQL`, `software_access_enabled=true`): bạn có chuyên môn ngành Quản lý Vận hành Tòa nhà theo đúng chức danh, NHƯNG kiến thức sử dụng phần mềm web Demego QLTN ban đầu bằng 0 (lần đầu tiếp xúc phần mềm).
+  + BẮT BUỘC đặt **`readonly=false`** mỗi khi gọi bất kỳ hành động nào: `login_qltn_portal`, `click_web_text`, `click_web_element`, `fill_web_input`, `select_web_option`, `navigate_web_path`, `ask_atlas_support`, `report_resident_incident`, `send_urban_message`, `manage_incident`, `move_to_zone`, `move_to_checkpoint`. TUYỆT ĐỐI KHÔNG gộp lệnh "quan sát rồi đăng nhập/bấm/hỏi/gửi tin" trong `ask_env(..., readonly=true)`.
+  + Hãy chủ động sử dụng `move_to_checkpoint` hoặc `move_to_zone` (`readonly=false`) khi di chuyển thực tế trong khu đô thị theo đúng đặc tính vai trò và các chốt trong `map_context.nearby_checkpoints` (An ninh đi tuần tra các chốt, Kỹ thuật/Vệ sinh tới điểm hạ tầng/sự cố, Cư dân đi dạo hoặc sử dụng tiện ích phù hợp khung giờ).
+- Nếu bạn là Nhân sự Ban Quản lý (`BQL`, `software_access_enabled=true`): bạn có chuyên môn ngành Quản lý Vận hành Tòa nhà theo đúng chức danh, NHƯNG kiến thức sử dụng phần mềm web QLTN{portal_hint} ban đầu bằng 0 (lần đầu tiếp xúc phần mềm).
   1. Ở Tick 1, kiểm tra hộp thư (`observe_urban_inbox`) và **đăng nhập ngay QLTN** bằng `ask_env(..., readonly=false)` gọi `login_qltn_portal`.
   2. KHÔNG ĐƯỢC kết thúc lượt chỉ bằng lời hứa "lượt sau sẽ làm/sẽ tìm hiểu"! Ngay trong lượt hiện tại sau khi vào `/home` QLTN:
-     - Nếu trong `notes/atlas_guides.md` chưa có hướng dẫn thao tác cho chức danh của bạn, hãy **gọi ngay `ask_env(..., readonly=false, ctx={"attach_screenshot": true})`** với `instruction="Nhắn hỏi Đội ngũ hỗ trợ / CSKH Thần Nông qua ask_atlas_support: <câu hỏi tự nhiên>"` để hỏi đường dẫn/cách làm nghiệp vụ trên QLTN, rồi lưu lại vào `notes/atlas_guides.md`.
-     - **Phản xạ Leo thang khi gặp sự cố (Failure-Escalation — áp dụng ở MỌI bước, kể cả khi đã có `notes/atlas_guides.md`):** Nếu gặp bất kỳ tình huống nào sau đây: (a) bấm hoặc tìm chức năng trên web thất bại (`ok=False`) sau 1–2 lần thử, (b) phần mềm báo không đủ quyền (`Bạn không có quyền xem...`) hoặc thiếu cấu hình biểu mẫu (`Không có loại phiếu`), hoặc (c) số liệu/danh sách trên màn hình mâu thuẫn bất thường (ví dụ badge báo `99+` nhưng bảng trống hoặc chỉ số mở bằng `0`), **KHÔNG dừng ở việc ghi chú thụ động** — hãy gọi ngay `ask_env(..., readonly=false, ctx={"attach_screenshot": true})` với `instruction="Nhắn hỏi Đội ngũ hỗ trợ / CSKH Thần Nông qua ask_atlas_support: <mô tả màn hình và vướng mắc vừa gặp>"` (trong hạn mức cho phép mỗi bước) để nhận hướng dẫn xử lý thực tế.
+     - Nếu trong `notes/atlas_guides.md` chưa có hướng dẫn thao tác cho chức danh của bạn, hãy **gọi ngay `ask_env(..., readonly=false, ctx={{"attach_screenshot": true}})`** với `instruction="Nhắn hỏi Đội ngũ hỗ trợ / CSKH Thần Nông qua ask_atlas_support: <câu hỏi tự nhiên>"` để hỏi đường dẫn/cách làm nghiệp vụ trên QLTN, rồi lưu lại vào `notes/atlas_guides.md`.
+     - **Phản xạ Leo thang khi gặp sự cố (Failure-Escalation — áp dụng ở MỌI bước, kể cả khi đã có `notes/atlas_guides.md`):** Nếu gặp bất kỳ tình huống nào sau đây: (a) bấm hoặc tìm chức năng trên web thất bại (`ok=False`) sau 1–2 lần thử, (b) phần mềm báo không đủ quyền (`Bạn không có quyền xem...`) hoặc thiếu cấu hình biểu mẫu (`Không có loại phiếu`), hoặc (c) số liệu/danh sách trên màn hình mâu thuẫn bất thường (ví dụ badge báo `99+` nhưng bảng trống hoặc chỉ số mở bằng `0`), **KHÔNG dừng ở việc ghi chú thụ động** — hãy gọi ngay `ask_env(..., readonly=false, ctx={{"attach_screenshot": true}})` với `instruction="Nhắn hỏi Đội ngũ hỗ trợ / CSKH Thần Nông qua ask_atlas_support: <mô tả màn hình và vướng mắc vừa gặp>"` (trong hạn mức cho phép mỗi bước) để nhận hướng dẫn xử lý thực tế.
      - Kênh CSKH này đại diện cho Đội ngũ trợ lý của Thần Nông (có thể gồm cả chuyên viên người thật và trợ lý hỗ trợ), vì vậy phần `<câu hỏi tự nhiên>` hãy giao tiếp như người với người: đi thẳng vào vướng mắc thực tế trên màn hình; **TUYỆT ĐỐI CẤM** nhắc tên `"EvidenceAtlas"`, `"bot"` hay `"agent_id"`, **CẤM** thêm câu ra lệnh định dạng kiểu chatbot như `"Vui lòng trả lời ngắn gọn bằng tiếng Việt"` hay viết `"kèm ảnh chụp màn hình"` vào nội dung câu hỏi.
      - Đồng thời dùng **`click_web_text` (`readonly=false`)** (vd: `"Phiếu yêu cầu"`, `"Phản ánh qua App"`, `"Công việc"`, `"Công việc thực thi"`, `"Danh sách bãi đỗ"`, `"Việc chờ"`, `"Cư dân"`) để mở trực tiếp phân hệ thật trên QLTN thay vì dừng mãi ở `/home`.
-  3. Khi thấy sự vụ/tin nhắn từ Cư dân trong `observe_urban_inbox`: Lễ tân (`agent_id=3`) phải vừa kiểm tra/tạo phản ánh trên QLTN, vừa chuyển việc tới Kỹ thuật / An ninh / Kế toán Công nợ (đối với phản ánh phí dịch vụ, hóa đơn, công nợ, gạch nợ) qua `send_urban_message` (`readonly=false`) và phản hồi Cư dân ngay. Đồng thời luôn đọc `building_context.scenario_brief` và `building_context.building_signals` trong `observe_urban_inbox` để nắm thực trạng chung của khu đô thị trong ca làm việc.
+  3. Khi thấy sự vụ/tin nhắn từ Cư dân trong `observe_urban_inbox`: {rec_ref} phải vừa kiểm tra/tạo phản ánh trên QLTN, vừa chuyển việc tới Kỹ thuật / An ninh / Kế toán Công nợ (đối với phản ánh phí dịch vụ, hóa đơn, công nợ, gạch nợ) qua `send_urban_message` (`readonly=false`) và phản hồi Cư dân ngay. Đồng thời luôn đọc `building_context.scenario_brief`, `building_context.current_zone_detail` và `building_context.building_signals` trong `observe_urban_inbox` để nắm thực trạng chung của khu đô thị trong ca làm việc.
   4. Ghi nhớ quy trình học được qua `finish(memories=[...])` và/hoặc `write("notes/atlas_guides.md", ...)` — TUYỆT ĐỐI KHÔNG tự ý ghi/chỉnh trực tiếp `MEMORY.md`.
-- Nếu bạn là Cư dân Chủ hộ (`RESIDENT`, `software_access_enabled=false`): bạn KHÔNG có quyền truy cập phần mềm QLTN nội bộ hay kênh hỗ trợ CSKH nội bộ, và KHÔNG dùng bản đồ Bắc Kinh hay `story.yaml` cũ. Ở mỗi bước hãy gọi `observe_urban_inbox` (`readonly=True`), đọc `building_context.building_signals` và đối chiếu với ĐÚNG thông tin căn hộ, số nhân khẩu, biển số xe thật của bạn trong `<agent>` (tuyệt đối không bịa thêm xe nếu hồ sơ ghi 0 xe). Khi thấy trải nghiệm sự cố/bất tiện trực tiếp ảnh hưởng tới căn hộ hoặc xe thật của mình và `has_own_open_incident == false`, KHÔNG ĐƯỢC kết thúc lượt bằng "để lượt sau" — hãy gọi NGAY `ask_env(..., readonly=false)` dùng `report_resident_incident` (`recipient_agent_id=3`) hoặc `send_urban_message` gửi Lễ tân (`agent_id=3`) trong chính tick đó! Khi đã có sự vụ mở thì chỉ theo dõi/phản hồi tin mới từ Lễ tân.
+- Nếu bạn là Cư dân Chủ hộ (`RESIDENT`, `software_access_enabled=false`): bạn KHÔNG có quyền truy cập phần mềm QLTN nội bộ hay kênh hỗ trợ CSKH nội bộ, và KHÔNG dùng bản đồ Bắc Kinh hay `story.yaml` cũ. Ở mỗi bước hãy gọi `observe_urban_inbox` (`readonly=True`), đọc `building_context.scenario_brief`, `building_context.current_zone_detail` và `building_context.building_signals` và đối chiếu với ĐÚNG thông tin căn hộ, số nhân khẩu, biển số xe thật của bạn trong `<agent>` (tuyệt đối không bịa thêm xe nếu hồ sơ ghi 0 xe). Khi thấy trải nghiệm sự cố/bất tiện trực tiếp ảnh hưởng tới căn hộ hoặc xe thật của mình và `has_own_open_incident == false`, KHÔNG ĐƯỢC kết thúc lượt bằng "để lượt sau" — hãy gọi NGAY `ask_env(..., readonly=false)` dùng `report_resident_incident` ({rec_call}) hoặc `send_urban_message` gửi Lễ tân ({rec_msg}) trong chính tick đó! Khi đã có sự vụ mở thì chỉ theo dõi/phản hồi tin mới từ Lễ tân.
 </identity>
 
 <decision_workflow>
@@ -56,6 +158,9 @@ Mọi hành động BẮT BUỘC dùng OpenAI tool calls. Có thể gộp nhiề
 3. Để thao tác môi trường (đăng nhập web, bấm menu, báo sự cố/gửi tin), gọi `ask_env` với `readonly=false` và nêu rõ hành động bằng Tiếng Việt. Riêng khi cần nhắn hỏi Đội ngũ hỗ trợ / CSKH Thần Nông qua `ask_atlas_support`, hãy viết đúng lời hỏi tự nhiên như nhân sự đang trao đổi với người hỗ trợ (không dùng văn phong ra lệnh cho bot hay nhồi từ khóa điều khiển định dạng).
 4. Kết thúc mỗi tick bằng một lần gọi `finish`: ở chế độ `step` hãy điền những thông tin/kinh nghiệm mới học được vào `memories` bằng Tiếng Việt để nhớ sang bước tiếp theo; ở chế độ `ask` trả đúng câu trả lời vào `answer`.
 </decision_workflow>"""
+
+
+URBAN_SIM_BASE_RULES = build_urban_sim_base_rules()
 
 
 def _sanitize_legacy_bql_prompt_text(text: str) -> str:
@@ -93,6 +198,7 @@ def compile_run_from_db(
     personas: list[UrbanSimPersona],
     atlas: UrbanSimAtlasConfig | None,
     zones: list[UrbanSimZone],
+    checkpoints: list[UrbanSimCheckpoint] | None = None,
     run_dir: Path,
     workspace_root: Path | None = None,
 ) -> CompiledRunBundle:
@@ -111,6 +217,22 @@ def compile_run_from_db(
     active.sort(key=lambda item: item.agent_id)
     if not active:
         raise ValueError("Dự án chưa có Persona nào được bật (is_active=True) để chạy mô phỏng.")
+
+    if checkpoints is None:
+        try:
+            from sqlmodel import Session, select
+
+            eng = get_engine(workspace_root)
+            with Session(eng) as _s:
+                checkpoints = list(
+                    _s.exec(
+                        select(UrbanSimCheckpoint)
+                        .where(UrbanSimCheckpoint.project_id == project.id)
+                        .order_by(UrbanSimCheckpoint.sort_order, UrbanSimCheckpoint.name)  # type: ignore[arg-type]
+                    ).all()
+                )
+        except Exception:
+            checkpoints = []
 
     software_ids = sorted(p.agent_id for p in active if p.software_access_enabled)
     resident_ids = sorted(p.agent_id for p in active if not p.software_access_enabled)
@@ -132,13 +254,68 @@ def compile_run_from_db(
     ]
     zone_directory = [
         {
+            "id": z.id,
             "zone_key": z.zone_key,
             "name": z.name,
             "zone_type": z.zone_type,
             "description": z.description,
+            "ambient_signals": getattr(z, "ambient_signals", "") or "",
+            "center_x_pct": getattr(z, "center_x_pct", None),
+            "center_y_pct": getattr(z, "center_y_pct", None),
+            "polygon_points": parse_polygon_json(getattr(z, "polygon_points_json", None)),
+            "fill_color": getattr(z, "fill_color", None),
         }
         for z in sorted(zones, key=lambda item: item.sort_order)
     ]
+    checkpoint_directory = [
+        {
+            "id": cp.id,
+            "checkpoint_key": cp.checkpoint_key,
+            "name": cp.name,
+            "x_pct": round(float(cp.x_pct), 2),
+            "y_pct": round(float(cp.y_pct), 2),
+            "icon_emoji": cp.icon_emoji or "📍",
+            "description_md": cp.description_md or "",
+            "zone_key": cp.zone_key,
+            "category": cp.category or "general",
+            "sort_order": int(cp.sort_order),
+        }
+        for cp in sorted(checkpoints, key=lambda item: (item.sort_order, item.name))
+    ]
+
+    # Copy 2D map image snapshot and write immutable digital_map_snapshot.json for this Run
+    snapshot_image_filename: str | None = None
+    if (project.zone_map_image_rel or "").strip() and workspace_root is not None:
+        try:
+            src_img = resolve_urban_sim_map_image(workspace_root, project.zone_map_image_rel or "")
+            if src_img.is_file():
+                ext = src_img.suffix.lower() or ".png"
+                snapshot_image_filename = f"map_image{ext}"
+                shutil.copy2(src_img, init_dir / snapshot_image_filename)
+        except Exception:
+            snapshot_image_filename = None
+
+    has_snapshot_digital_map = bool(snapshot_image_filename or project.zone_map_image_rel) or any(
+        bool(z.get("polygon_points")) for z in zone_directory
+    )
+    snapshot_payload = {
+        "schema_version": 1,
+        "project_id": project.id,
+        "project_slug": project.slug,
+        "has_digital_map": has_snapshot_digital_map,
+        "map_prompt": getattr(project, "map_prompt", None) or "",
+        "map_width": getattr(project, "map_width", None),
+        "map_height": getattr(project, "map_height", None),
+        "map_aspect_ratio": getattr(project, "map_aspect_ratio", None) or 1.6,
+        "map_image_version": int(getattr(project, "map_image_version", 0) or 0),
+        "snapshot_image_filename": snapshot_image_filename,
+        "zones": zone_directory,
+        "checkpoints": checkpoint_directory,
+    }
+    atomic_write_text(
+        init_dir / "digital_map_snapshot.json",
+        json.dumps(snapshot_payload, ensure_ascii=False, indent=2),
+    )
 
     # Build encrypted runtime secret vault (0 plaintext passwords or API keys in init_config.json!)
     portal_credentials: dict[str, dict[str, str]] = {}
@@ -191,6 +368,7 @@ def compile_run_from_db(
                 "scenario_brief": scenario_brief,
                 "personas": agent_directory,
                 "zones": zone_directory,
+                "checkpoints": checkpoint_directory,
                 "bql_agent_ids": bql_ids,
                 "resident_agent_ids": resident_ids,
                 "events_log_path": str((run_dir / "urban_events.jsonl").resolve()),
@@ -286,52 +464,44 @@ def compile_run_from_db(
             if is_bql_or_sw
             else p.domain_knowledge_prompt
         )
+        traits = _parse_profile_traits(getattr(p, "profile_traits_json", None))
+        traits_block = _format_profile_traits_block(traits)
         profile_desc = (
-            f"ID={p.agent_id} | {p.full_name} — {p.role_title} ({p.department}) | Group={p.group_type} | Zone={p.home_zone}.\n"
+            f"ID={p.agent_id} | {p.full_name} — {p.role_title} ({p.department}) | Group={p.group_type} | Khu vực={p.home_zone}.\n"
             f"Project: {project.name}.\n"
-            f"{role_scope}\n"
+            f"{role_scope}"
+            f"{traits_block}\n"
             f"Domain Knowledge & Role Rules:\n{domain_prompt}"
             f"{tasks_block}"
         )
+        persona_profile: dict[str, Any] = {
+            **{k: v for k, v in traits.items() if v is not None and v != "" and v != []},
+            "id": int(p.agent_id),
+            "name": p.full_name,
+            "role": p.role_title,
+            "role_code": p.role_code,
+            "department": p.department,
+            "group_type": p.group_type,
+            "avatar_icon": (getattr(p, "avatar_icon", None) or "").strip()
+            or resolve_default_persona_icon(p.role_code, p.group_type, p.full_name),
+            "software_access_enabled": bool(p.software_access_enabled),
+            "home_zone": p.home_zone,
+            "description": profile_desc,
+        }
+        activated_skills, disabled_skills = _resolve_persona_skills(p)
         agents_cfg.append(
             {
                 "agent_id": int(p.agent_id),
                 "agent_type": "PersonAgent",
                 "kwargs": {
                     "id": int(p.agent_id),
-                    "profile": {
-                        "id": int(p.agent_id),
-                        "name": p.full_name,
-                        "role": p.role_title,
-                        "role_code": p.role_code,
-                        "department": p.department,
-                        "group_type": p.group_type,
-                        "software_access_enabled": bool(p.software_access_enabled),
-                        "home_zone": p.home_zone,
-                        "description": profile_desc,
-                    },
+                    "profile": persona_profile,
                     "max_react_turns": int(project.max_react_turns or 10),
                     "enable_todo_list": True,
                     "enable_memory": True,
                     "require_pre_action_thought": True,
-                    "disabled_skill_ids": (
-                        [
-                            "built-in@daily-guidance",
-                            "custom@my-custom-skill",
-                            "env:UrbanCommAndIncidentEnv@urban-resident-vn",
-                        ]
-                        if p.software_access_enabled
-                        else [
-                            "built-in@daily-guidance",
-                            "custom@my-custom-skill",
-                            "env:DemegoWebPortalEnv@bql-qltn-ops-vn",
-                        ]
-                    ),
-                    "default_activated_skill_ids": (
-                        ["env:DemegoWebPortalEnv@bql-qltn-ops-vn"]
-                        if p.software_access_enabled
-                        else ["env:UrbanCommAndIncidentEnv@urban-resident-vn"]
-                    ),
+                    "disabled_skill_ids": disabled_skills,
+                    "default_activated_skill_ids": activated_skills,
                 },
             }
         )
@@ -431,10 +601,15 @@ def compile_run_from_db(
         "steps": compiled_steps,
     }
 
+    dynamic_base_rules = build_urban_sim_base_rules(
+        project_name=project.name,
+        receptionist_id=receptionist_id,
+        default_portal_url=project.default_portal_url,
+    )
     prompt_overrides_path = (run_dir / "prompt_overrides.json").resolve()
     atomic_write_text(
         prompt_overrides_path,
-        json.dumps({"base_rules": URBAN_SIM_BASE_RULES}, ensure_ascii=False, indent=2),
+        json.dumps({"base_rules": dynamic_base_rules}, ensure_ascii=False, indent=2),
     )
 
     config_path = (init_dir / "init_config.json").resolve()
@@ -444,6 +619,14 @@ def compile_run_from_db(
         steps_path,
         yaml.safe_dump(steps_yaml, allow_unicode=True, sort_keys=False),
     )
+
+    # Snapshot custom skills from workspace_root/custom/skills into run_dir/custom/skills
+    # so AgentBase.discover_custom_skills finds all /skills modules during subprocess runs.
+    src_custom_skills = (Path(workspace_root) / "custom" / "skills").resolve()
+    if src_custom_skills.is_dir():
+        dst_custom_skills = (run_dir / "custom" / "skills").resolve()
+        dst_custom_skills.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(src_custom_skills, dst_custom_skills, dirs_exist_ok=True)
 
     return CompiledRunBundle(
         config_path=config_path,

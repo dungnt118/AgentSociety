@@ -318,7 +318,15 @@ def resolve_llm_env_override(
     return overrides
 
 
-def serialize_map_config(row: PlatformMapConfig) -> dict[str, Any]:
+def serialize_map_config(
+    row: PlatformMapConfig,
+    linked_project_name: str | None = None,
+) -> dict[str, Any]:
+    managed_by = (
+        "urban_sim"
+        if (row.map_type == "urban_zones" or bool((row.linked_project_id or "").strip()))
+        else "platform"
+    )
     return {
         "id": row.id,
         "tenant_id": row.tenant_id,
@@ -326,12 +334,16 @@ def serialize_map_config(row: PlatformMapConfig) -> dict[str, Any]:
         "description": row.description,
         "map_type": row.map_type,
         "linked_project_id": row.linked_project_id,
+        "linked_project_name": linked_project_name,
+        "managed_by": managed_by,
         "created_at": row.created_at,
         "updated_at": row.updated_at,
         "config": {
             "file_path": row.file_path,
             "map_type": row.map_type,
             "linked_project_id": row.linked_project_id,
+            "linked_project_name": linked_project_name,
+            "managed_by": managed_by,
         },
     }
 

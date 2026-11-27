@@ -43,6 +43,7 @@ __all__ = [
     "extract_cached_tokens",
     "init_dispatchers",
     "is_rate_limit_like_error",
+    "is_unsupported_vision_error",
     "merge_token_stats",
     "rate_limit_retry_seconds",
     "shutdown_dispatchers",
@@ -211,6 +212,48 @@ def is_context_limit_error(error: Exception) -> bool:
             "prompt is too long",
         )
     )
+
+
+def _messages_have_image_url(messages: list[Any]) -> bool:
+    for msg in messages:
+        content = msg.get("content") if isinstance(msg, dict) else getattr(msg, "content", None)
+        if isinstance(content, list):
+            for part in content:
+                if isinstance(part, dict) and (
+                    part.get("type") == "image_url" or "image_url" in part
+                ):
+                    return True
+    return False
+
+
+def is_unsupported_vision_error(error: Exception) -> bool:
+    """Detect deterministic 400/422 errors indicating the model/provider rejects image inputs."""
+    err_parts = [str(error)]
+    if getattr(error, "__cause__", None) is not None:
+        err_parts.append(str(error.__cause__))
+    err_text = " ".join(err_parts).lower()
+    status_code = getattr(error, "status_code", None)
+    markers = (
+        "vision unsupported",
+        "does not support image",
+        "not support image",
+        "image_url",
+        "multimodal",
+        "vision is not supported",
+        "unsupported content type",
+        "cannot process image",
+        "invalid content part",
+        "expected string, got array",
+        "expected `string`, found `array`",
+        "unknown variant `image_url`",
+        "does not accept images",
+        "input_image",
+    )
+    if any(m in err_text for m in markers):
+        return True
+    if status_code in (400, 422) and ("image" in err_text or "vision" in err_text):
+        return True
+    return False
 
 
 # ═══════════════════════════════════════════════════════════
@@ -879,6 +922,7 @@ class LLMClient:
         base_delay: float = 1.0,
         max_delay: float = 60.0,
         thinking: str = "inherit",
+        request_timeout: float | None = None,
         **kwargs: Any,
     ) -> ModelResponse:
         """发送补全请求,带按循环的 AIMD 门控与重试。
@@ -898,8 +942,15 @@ class LLMClient:
         if messages is None:
             messages = []
         max_retries = max(max_retries, 1)
+        effective_timeout = (
+            float(request_timeout)
+            if request_timeout is not None and request_timeout > 0
+            else _LLM_REQUEST_TIMEOUT
+        )
+        has_image_payload = _messages_have_image_url(messages)
         effective_model = model or self.model_name
         request_kwargs = self._resolve_thinking_kwargs(thinking, kwargs)
+        request_kwargs.pop("timeout", None)
         self._ensure_runtime()
         router = self._router
         sem = self._sem
@@ -940,7 +991,7 @@ class LLMClient:
                     model=effective_model,
                     messages=messages,
                     stream=False,
-                    timeout=_LLM_REQUEST_TIMEOUT,
+                    timeout=effective_timeout,
                     **request_kwargs,
                 )
                 latency_ms = (time.monotonic() - t0) * 1000
@@ -1023,6 +1074,20 @@ class LLMClient:
                         f"Context window exceeded for '{effective_model}' "
                         f"via LLMClient({self.model_type}); request not "
                         f"retried. Error: {e!s}",
+                        rate_limit_like=False,
+                    ) from e
+                if has_image_payload and is_unsupported_vision_error(e):
+                    # Deterministic failure when sending image_url to a text-only endpoint/model:
+                    # fail-fast on attempt 0 so callers can immediately fall back to text-only.
+                    logger.warning(
+                        "Vision/image_url unsupported for '%s' via LLMClient(%s); "
+                        "fail-fast (0 retries). Error: %s",
+                        effective_model,
+                        self.model_type,
+                        e,
+                    )
+                    raise LLMDispatchError(
+                        f"Vision unsupported for '{effective_model}': {e!s}",
                         rate_limit_like=False,
                     ) from e
                 if attempt >= max_retries:

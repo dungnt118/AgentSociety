@@ -9,22 +9,274 @@ from sqlmodel import Session, select
 
 from agentsociety2.backend.services.urban_sim.db import (
     UrbanSimAtlasConfig,
+    UrbanSimCheckpoint,
     UrbanSimPersona,
     UrbanSimProject,
     UrbanSimZone,
     get_engine,
+    resolve_default_persona_icon,
 )
 
 MULBERRYLANE_ZONES = [
-    ("LOBBY_MAIN", "Sảnh Lễ tân Trung tâm", "LOBBY", "Khu vực tiếp đón cư dân, nhận phản ánh, đăng ký thẻ xe và bưu phẩm.", 1),
-    ("BQL_OFFICE", "Văn phòng Ban Quản lý", "OFFICE", "Nơi làm việc của Giám đốc dự án và Trợ lý dự án, phê duyệt và điều phối chung.", 2),
-    ("TECH_ROOM", "Phòng Điều hành Kỹ thuật", "TECHNICAL", "Quản lý hạ tầng điện, nước, thang máy, điều hòa và xử lý ticket bảo trì.", 3),
-    ("SEC_CONTROL", "Phòng Trực An ninh & Hầm xe B1-B2", "SECURITY", "Giám sát camera, kiểm soát ra vào, tuần tra bãi xe và xử lý sự cố trật tự.", 4),
-    ("TOWER_A", "Zen Tower — Tháp ZA", "TOWER", "Khối căn hộ ZA thuộc tòa Zen Tower (mã tòa ZEN trên QLTN).", 5),
-    ("TOWER_B", "Zen Tower — Tháp ZB", "TOWER", "Khối căn hộ ZB thuộc tòa Zen Tower (mã tòa ZEN trên QLTN).", 6),
-    ("TOWER_C", "Fantasy Tower (CT1C)", "TOWER", "Khối căn hộ F thuộc tòa Fantasy Tower (mã tòa CT1C trên QLTN).", 7),
-    ("TOWER_D", "Tropical Tower (CT2C)", "TOWER", "Khối căn hộ T thuộc tòa Tropical Tower (mã tòa CT2C trên QLTN).", 8),
-    ("TOWER_E", "Tòa Horizon 1 & Khu tiện ích", "TOWER", "Tòa Horizon 1 (HZ1) và khu tiện ích chung MulberryLane.", 9),
+    (
+        "LOBBY_MAIN",
+        "Sảnh Lễ tân Trung tâm",
+        "LOBBY",
+        "Khu vực tiếp đón cư dân, nhận phản ánh, đăng ký thẻ xe và bưu phẩm.",
+        1,
+        "Tại Sảnh Lễ tân Trung tâm: cư dân liên hệ đăng ký thẻ xe, chuyển khoản phí dịch vụ và gửi phản ánh căn hộ/kỹ thuật.",
+    ),
+    (
+        "BQL_OFFICE",
+        "Văn phòng Ban Quản lý",
+        "OFFICE",
+        "Nơi làm việc của Giám đốc dự án và Trợ lý dự án, phê duyệt và điều phối chung.",
+        2,
+        "Văn phòng BQL & Kế toán rà soát phản ánh cư dân, Phiếu yêu cầu, Công việc thực thi và Công nợ/Phiếu thu phí dịch vụ tháng 6 trên QLTN.",
+    ),
+    (
+        "TECH_ROOM",
+        "Phòng Điều hành Kỹ thuật",
+        "TECHNICAL",
+        "Quản lý hạ tầng điện, nước, thang máy, điều hòa và xử lý ticket bảo trì.",
+        3,
+        "Bộ phận Kỹ thuật M&E kiểm tra công việc thực thi định kỳ, hệ thống bơm nước, chiếu sáng hành lang và vận hành thang máy các tháp.",
+    ),
+    (
+        "SEC_CONTROL",
+        "Phòng Trực An ninh & Hầm xe B1-B2",
+        "SECURITY",
+        "Giám sát camera, kiểm soát ra vào, tuần tra bãi xe và xử lý sự cố trật tự.",
+        4,
+        "Tại Hầm xe B1-B2 & Cổng An ninh: đầu đọc thẻ xe máy và barie nhận diện biển số ô tô cần kiểm tra vận hành giờ cao điểm.",
+    ),
+    (
+        "TOWER_A",
+        "Zen Tower — Tháp ZA",
+        "TOWER",
+        "Khối căn hộ ZA thuộc tòa Zen Tower (mã tòa ZEN trên QLTN).",
+        5,
+        "Trải nghiệm trực tiếp tại Zen Tower ZA: khi mở vòi nước căn hộ thấy áp lực tụt mạnh đột ngột, bóng đèn hành lang trước cửa nhấp nháy liên tục; ngoài ra hóa đơn phí dịch vụ/nước tháng 6 có khoản phụ thu cần hỏi Lễ tân/Kế toán đối soát hoặc làm thủ tục thẻ cư dân.\nTại hầm xe máy B1 lối lên Tháp ZA đầu đọc thẻ nhận chậm hoặc kẹt nhẹ ở barie khiến việc dắt/quẹt xe mất nhiều lần.",
+    ),
+    (
+        "TOWER_B",
+        "Zen Tower — Tháp ZB",
+        "TOWER",
+        "Khối căn hộ ZB thuộc tòa Zen Tower (mã tòa ZEN trên QLTN).",
+        6,
+        "Trải nghiệm trực tiếp tại Zen Tower ZB: đầu đọc thẻ xe máy hầm B1 lối ZB báo lỗi không nhận thẻ; cư dân có nhu cầu kiểm tra gạch nợ chuyển khoản phí gửi xe tháng 6 và hỗ trợ thang hàng.",
+    ),
+    (
+        "TOWER_C",
+        "Fantasy Tower (CT1C)",
+        "TOWER",
+        "Khối căn hộ F thuộc tòa Fantasy Tower (mã tòa CT1C trên QLTN).",
+        7,
+        "Trải nghiệm trực tiếp tại Fantasy Tower CT1C: thang máy khu tầng cao (tầng 20–26) rung lắc nhẹ và dừng kẹt khoảng 20 giây mới mở cửa; barie nhận diện biển số ô tô ở cổng hầm B1 không tự mở khiến xe phải chờ bảo vệ ra xử lý.",
+    ),
+    (
+        "TOWER_D",
+        "Tropical Tower (CT2C)",
+        "TOWER",
+        "Khối căn hộ T thuộc tòa Tropical Tower (mã tòa CT2C trên QLTN).",
+        8,
+        "Tại Tropical Tower CT2C: cư dân theo dõi thông báo phí dịch vụ tháng mới, kiểm tra vệ sinh sảnh thang máy và bưu phẩm giờ cao điểm.",
+    ),
+    (
+        "TOWER_E",
+        "Tòa Horizon 1 & Khu tiện ích",
+        "TOWER",
+        "Tòa Horizon 1 (HZ1) và khu tiện ích chung MulberryLane.",
+        9,
+        "Tại Horizon 1 (HZ1) & Khu tiện ích: cư dân quan tâm vệ sinh sân chơi/tiện ích chung, kiểm soát thẻ cư dân và chiếu sáng lối đi bộ.",
+    ),
+]
+
+MULBERRYLANE_MAP_PROMPT = (
+    "Mặt bằng tổng thể Khu đô thị MulberryLane (tỷ lệ 16:10): "
+    "Dải phía Nam gồm Trạm trực An ninh & Hầm xe B1-B2 (Tây Nam), Sảnh Lễ tân Trung tâm (giữa) và Văn phòng Ban Quản lý (Đông Nam). "
+    "Dải trung tâm gồm Phòng Điều hành Kỹ thuật M&E (Tây), Tháp Zen ZA (giữa, kề bể bơi ngoài trời) và Tháp Zen ZB (Đông, kề phòng gym). "
+    "Dải phía Bắc gồm Tháp Fantasy CT1C (Tây Bắc), Tháp Tropical CT2C (giữa, kề khu vui chơi trẻ em) và Tòa Horizon 1 & Vườn BBQ (Đông Bắc)."
+)
+
+MULBERRYLANE_ZONE_GEOMETRIES: dict[str, dict[str, object]] = {
+    "SEC_CONTROL": {
+        "center_x_pct": 17.0,
+        "center_y_pct": 81.5,
+        "fill_color": "#f59e0b",
+        "polygon_points": [[4.0, 68.0], [30.0, 68.0], [30.0, 95.0], [4.0, 95.0]],
+    },
+    "LOBBY_MAIN": {
+        "center_x_pct": 49.0,
+        "center_y_pct": 81.5,
+        "fill_color": "#0ea5e9",
+        "polygon_points": [[32.0, 68.0], [66.0, 68.0], [66.0, 95.0], [32.0, 95.0]],
+    },
+    "BQL_OFFICE": {
+        "center_x_pct": 82.0,
+        "center_y_pct": 81.5,
+        "fill_color": "#6366f1",
+        "polygon_points": [[68.0, 68.0], [96.0, 68.0], [96.0, 95.0], [68.0, 95.0]],
+    },
+    "TECH_ROOM": {
+        "center_x_pct": 15.0,
+        "center_y_pct": 51.5,
+        "fill_color": "#64748b",
+        "polygon_points": [[4.0, 38.0], [26.0, 38.0], [26.0, 65.0], [4.0, 65.0]],
+    },
+    "TOWER_A": {
+        "center_x_pct": 44.0,
+        "center_y_pct": 51.5,
+        "fill_color": "#3b82f6",
+        "polygon_points": [[28.0, 38.0], [60.0, 38.0], [60.0, 65.0], [28.0, 65.0]],
+    },
+    "TOWER_B": {
+        "center_x_pct": 79.0,
+        "center_y_pct": 51.5,
+        "fill_color": "#2563eb",
+        "polygon_points": [[62.0, 38.0], [96.0, 38.0], [96.0, 65.0], [62.0, 65.0]],
+    },
+    "TOWER_C": {
+        "center_x_pct": 18.5,
+        "center_y_pct": 20.5,
+        "fill_color": "#8b5cf6",
+        "polygon_points": [[4.0, 6.0], [33.0, 6.0], [33.0, 35.0], [4.0, 35.0]],
+    },
+    "TOWER_D": {
+        "center_x_pct": 50.0,
+        "center_y_pct": 20.5,
+        "fill_color": "#10b981",
+        "polygon_points": [[35.0, 6.0], [65.0, 6.0], [65.0, 35.0], [35.0, 35.0]],
+    },
+    "TOWER_E": {
+        "center_x_pct": 81.5,
+        "center_y_pct": 20.5,
+        "fill_color": "#14b8a6",
+        "polygon_points": [[67.0, 6.0], [96.0, 6.0], [96.0, 35.0], [67.0, 35.0]],
+    },
+}
+
+MULBERRYLANE_CHECKPOINTS: list[dict[str, object]] = [
+    {
+        "checkpoint_key": "CP_GATE_MAIN",
+        "name": "Cổng An ninh Chính",
+        "x_pct": 12.0,
+        "y_pct": 84.0,
+        "icon_emoji": "🛡️",
+        "zone_key": "SEC_CONTROL",
+        "category": "security",
+        "sort_order": 1,
+        "description_md": (
+            "### Chốt Trực Cổng Chính\n"
+            "- **Nhiệm vụ An ninh:** Kiểm soát ra vào cổng chính, xác nhận khách giao hàng và tuần tra định kỳ 2 giờ/lần.\n"
+            "- **Lưu ý giờ cao điểm:** Theo dõi luồng xe ra vào 07:30–09:00 và 17:00–19:00."
+        ),
+    },
+    {
+        "checkpoint_key": "CP_PARKING_B1",
+        "name": "Trạm Barie & Hầm xe B1",
+        "x_pct": 22.0,
+        "y_pct": 74.0,
+        "icon_emoji": "🚗",
+        "zone_key": "SEC_CONTROL",
+        "category": "security",
+        "sort_order": 2,
+        "description_md": (
+            "### Trạm Barie Hầm B1\n"
+            "- **Thiết bị trọng yếu:** Đầu đọc thẻ xe máy lối ZA/ZB và camera nhận diện biển số ô tô.\n"
+            "- **Nghiệp vụ:** Hỗ trợ xe bị kẹt barie, kiểm tra an toàn PCCC và vệ sinh hầm gửi xe."
+        ),
+    },
+    {
+        "checkpoint_key": "CP_RECEPTION",
+        "name": "Quầy Lễ tân Trung tâm",
+        "x_pct": 49.0,
+        "y_pct": 80.0,
+        "icon_emoji": "🛎️",
+        "zone_key": "LOBBY_MAIN",
+        "category": "service",
+        "sort_order": 3,
+        "description_md": (
+            "### Quầy Lễ tân & Tiếp đón Cư dân\n"
+            "- **Dịch vụ tại chỗ:** Đăng ký thẻ cư dân, thẻ gửi xe, nhận bưu phẩm và tiếp nhận phản ánh trực tiếp.\n"
+            "- **Phối hợp:** Chuyển thông tin công nợ cho Kế toán và phiếu sự cố cho Kỹ thuật."
+        ),
+    },
+    {
+        "checkpoint_key": "CP_PUMP_ME",
+        "name": "Trạm Bơm & Tủ điện M&E",
+        "x_pct": 15.0,
+        "y_pct": 51.0,
+        "icon_emoji": "🔧",
+        "zone_key": "TECH_ROOM",
+        "category": "facility",
+        "sort_order": 4,
+        "description_md": (
+            "### Khu Hạ tầng Kỹ thuật M&E\n"
+            "- **Kiểm tra định kỳ:** Đo áp lực bơm nước sinh hoạt cấp cho Zen ZA, tủ chiếu sáng hành lang và thang máy.\n"
+            "- **An toàn:** Chỉ nhân sự kỹ thuật M&E / Giám sát BQL thực hiện kiểm tra."
+        ),
+    },
+    {
+        "checkpoint_key": "CP_POOL",
+        "name": "Bể bơi Ngoài trời Khu Zen",
+        "x_pct": 44.0,
+        "y_pct": 52.0,
+        "icon_emoji": "🏊",
+        "zone_key": "TOWER_A",
+        "category": "amenity",
+        "sort_order": 5,
+        "description_md": (
+            "### Bể bơi Khu Đô thị\n"
+            "- **Tiện ích cư dân:** Mở cửa 06:00–21:00 hằng ngày cho cư dân bơi lội và thư giãn.\n"
+            "- **Kiểm soát vận hành:** Vệ sinh mặt nước, kiểm tra nồng độ pH và trực an toàn cứu hộ."
+        ),
+    },
+    {
+        "checkpoint_key": "CP_GYM",
+        "name": "Phòng Gym & Fitness",
+        "x_pct": 79.0,
+        "y_pct": 52.0,
+        "icon_emoji": "🏋️",
+        "zone_key": "TOWER_B",
+        "category": "amenity",
+        "sort_order": 6,
+        "description_md": (
+            "### Phòng Gym & Fitness MulberryLane\n"
+            "- **Hoạt động cư dân:** Tập luyện thể thao sáng/tối bằng thẻ cư dân hợp lệ.\n"
+            "- **Giám sát BQL:** Kiểm tra điều hòa, vệ sinh thảm tập và thiết bị."
+        ),
+    },
+    {
+        "checkpoint_key": "CP_PLAYGROUND",
+        "name": "Khu Vui chơi Trẻ em & Đường dạo",
+        "x_pct": 50.0,
+        "y_pct": 21.0,
+        "icon_emoji": "🎠",
+        "zone_key": "TOWER_D",
+        "category": "amenity",
+        "sort_order": 7,
+        "description_md": (
+            "### Sân chơi Trẻ em & Đường dạo Nội khu\n"
+            "- **Cư dân:** Điểm dạo bộ buổi sáng, đưa đón trẻ vui chơi và trao đổi sinh hoạt cộng đồng.\n"
+            "- **Vệ sinh & An ninh:** Giám sát vệ sinh cảnh quan và chiếu sáng lối đi bộ."
+        ),
+    },
+    {
+        "checkpoint_key": "CP_BBQ",
+        "name": "Vườn Nướng BBQ & Vọng cảnh",
+        "x_pct": 82.0,
+        "y_pct": 21.0,
+        "icon_emoji": "🍖",
+        "zone_key": "TOWER_E",
+        "category": "amenity",
+        "sort_order": 8,
+        "description_md": (
+            "### Vườn Nướng BBQ Cộng đồng\n"
+            "- **Tiện ích cộng đồng:** Tổ chức tiệc gia đình/cư dân (đăng ký trước với Lễ tân).\n"
+            "- **An toàn PCCC:** An ninh & Vệ sinh kiểm tra tắt bếp than và thu gom rác cuối buổi."
+        ),
+    },
 ]
 
 MULBERRYLANE_SCENARIO_BRIEF = """## Bối cảnh & Thực trạng Vận hành Khu đô thị MulberryLane
@@ -148,7 +400,7 @@ MULBERRYLANE_PERSONAS = [
             + _BQL_ZERO_SOFTWARE_NOTE
         ),
         "initial_tasks": [
-            "Nhận phân công từ Trưởng ca An ninh, kiểm tra khu vực Sảnh A / Tháp A và báo cáo kết quả.",
+            "Nhận phân công từ Trưởng ca An ninh, gọi move_to_checkpoint tuần tra thực địa khu vực Cổng chính / Sảnh A và báo cáo kết quả.",
         ],
     },
     {
@@ -167,7 +419,7 @@ MULBERRYLANE_PERSONAS = [
             + _BQL_ZERO_SOFTWARE_NOTE
         ),
         "initial_tasks": [
-            "Tuần tra Hầm B1 theo yêu cầu của Trưởng ca An ninh và phản hồi kết quả kiểm tra xe.",
+            "Gọi move_to_checkpoint tuần tra thực địa Hầm B1 / Barie xe theo yêu cầu Trưởng ca An ninh và phản hồi kết quả kiểm tra.",
         ],
     },
     {
@@ -205,7 +457,7 @@ MULBERRYLANE_PERSONAS = [
             + _BQL_ZERO_SOFTWARE_NOTE
         ),
         "initial_tasks": [
-            "Tuần tra Tháp D-E, giám sát khu vực sảnh hàng hóa và báo cáo về phòng trực.",
+            "Gọi move_to_checkpoint tuần tra thực địa khu vực Tháp D-E / Tiện ích, giám sát sảnh hàng hóa và báo cáo về phòng trực.",
         ],
     },
     {
@@ -245,7 +497,7 @@ MULBERRYLANE_PERSONAS = [
             + _BQL_ZERO_SOFTWARE_NOTE
         ),
         "initial_tasks": [
-            "Kiểm tra phân công từ Kỹ sư trưởng, di chuyển tới Tháp/căn hộ gặp sự cố nước và cập nhật kết quả lên QLTN.",
+            "Kiểm tra phân công từ Kỹ sư trưởng, gọi move_to_checkpoint di chuyển tới chốt kỹ thuật / Tháp A kiểm tra sự cố nước và cập nhật kết quả lên QLTN.",
         ],
     },
     {
@@ -264,7 +516,7 @@ MULBERRYLANE_PERSONAS = [
             + _BQL_ZERO_SOFTWARE_NOTE
         ),
         "initial_tasks": [
-            "Nhận lệnh từ Kỹ sư trưởng để kiểm tra sự cố thang máy / điều hòa hành lang.",
+            "Nhận lệnh từ Kỹ sư trưởng và gọi move_to_checkpoint tới khu vực thang máy / Trạm kỹ thuật để kiểm tra hành lang.",
         ],
     },
     {
@@ -488,14 +740,77 @@ ACCOUNTING_PERSONA_TEMPLATE = next(
 )
 
 
+def backfill_mulberrylane_digital_map(session: Session, project: UrbanSimProject) -> bool:
+    """Idempotently populate default MulberryLane polygon geometries and checkpoints when missing."""
+    changed = False
+    zones = session.exec(
+        select(UrbanSimZone).where(UrbanSimZone.project_id == project.id)
+    ).all()
+    if zones and all(not (z.polygon_points_json or "").strip() for z in zones):
+        for z in zones:
+            geom = MULBERRYLANE_ZONE_GEOMETRIES.get(z.zone_key)
+            if geom:
+                z.center_x_pct = float(geom["center_x_pct"])  # type: ignore[arg-type]
+                z.center_y_pct = float(geom["center_y_pct"])  # type: ignore[arg-type]
+                z.fill_color = str(geom["fill_color"])
+                z.polygon_points_json = json.dumps(geom["polygon_points"])
+                session.add(z)
+                changed = True
+
+    if not (project.map_prompt or "").strip():
+        project.map_prompt = MULBERRYLANE_MAP_PROMPT
+        changed = True
+    if project.map_aspect_ratio is None:
+        project.map_aspect_ratio = 1.6
+        changed = True
+    if changed:
+        session.add(project)
+
+    existing_cps = session.exec(
+        select(UrbanSimCheckpoint).where(UrbanSimCheckpoint.project_id == project.id)
+    ).all()
+    if not existing_cps and zones:
+        zone_keys = {z.zone_key for z in zones}
+        for cp in MULBERRYLANE_CHECKPOINTS:
+            zkey = str(cp["zone_key"]) if cp["zone_key"] in zone_keys else None
+            session.add(
+                UrbanSimCheckpoint(
+                    project_id=project.id,
+                    checkpoint_key=str(cp["checkpoint_key"]),
+                    name=str(cp["name"]),
+                    x_pct=float(cp["x_pct"]),  # type: ignore[arg-type]
+                    y_pct=float(cp["y_pct"]),  # type: ignore[arg-type]
+                    icon_emoji=str(cp["icon_emoji"]),
+                    description_md=str(cp["description_md"]),
+                    zone_key=zkey,
+                    category=str(cp["category"]),
+                    sort_order=int(cp["sort_order"]),  # type: ignore[arg-type]
+                )
+            )
+        changed = True
+
+    existing_personas = session.exec(
+        select(UrbanSimPersona).where(UrbanSimPersona.project_id == project.id)
+    ).all()
+    for ep in existing_personas:
+        if not (getattr(ep, "avatar_icon", None) or "").strip():
+            ep.avatar_icon = resolve_default_persona_icon(ep.role_code, ep.group_type, ep.full_name)
+            session.add(ep)
+            changed = True
+    return changed
+
+
 def ensure_mulberrylane_seed(workspace_root: Path | None = None) -> UrbanSimProject:
-    """Idempotently seed the default MulberryLane project (22 personas, 9 zones, Atlas config)."""
+    """Idempotently seed the default MulberryLane project (22 personas, 9 zones, digital map & checkpoints)."""
     engine = get_engine(workspace_root)
     with Session(engine) as session:
         existing = session.exec(
             select(UrbanSimProject).where(UrbanSimProject.slug == "mulberrylane")
         ).first()
         if existing is not None:
+            if backfill_mulberrylane_digital_map(session, existing):
+                session.commit()
+                session.refresh(existing)
             return existing
 
         project = UrbanSimProject(
@@ -510,12 +825,15 @@ def ensure_mulberrylane_seed(workspace_root: Path | None = None) -> UrbanSimProj
             max_react_turns=10,
             max_cost_usd_per_run=5.0,
             pilot_mode=True,
+            map_prompt=MULBERRYLANE_MAP_PROMPT,
+            map_aspect_ratio=1.6,
             enable_sociological_debrief=True,
         )
         session.add(project)
         session.flush()
 
-        for z_key, z_name, z_type, z_desc, z_order in MULBERRYLANE_ZONES:
+        for z_key, z_name, z_type, z_desc, z_order, z_signals in MULBERRYLANE_ZONES:
+            geom = MULBERRYLANE_ZONE_GEOMETRIES.get(z_key, {})
             session.add(
                 UrbanSimZone(
                     project_id=project.id,
@@ -523,7 +841,32 @@ def ensure_mulberrylane_seed(workspace_root: Path | None = None) -> UrbanSimProj
                     name=z_name,
                     zone_type=z_type,
                     description=z_desc,
+                    ambient_signals=z_signals,
                     sort_order=z_order,
+                    center_x_pct=float(geom["center_x_pct"]) if "center_x_pct" in geom else None,  # type: ignore[arg-type]
+                    center_y_pct=float(geom["center_y_pct"]) if "center_y_pct" in geom else None,  # type: ignore[arg-type]
+                    fill_color=str(geom["fill_color"]) if "fill_color" in geom else None,
+                    polygon_points_json=(
+                        json.dumps(geom["polygon_points"])
+                        if "polygon_points" in geom
+                        else None
+                    ),
+                )
+            )
+
+        for cp in MULBERRYLANE_CHECKPOINTS:
+            session.add(
+                UrbanSimCheckpoint(
+                    project_id=project.id,
+                    checkpoint_key=str(cp["checkpoint_key"]),
+                    name=str(cp["name"]),
+                    x_pct=float(cp["x_pct"]),  # type: ignore[arg-type]
+                    y_pct=float(cp["y_pct"]),  # type: ignore[arg-type]
+                    icon_emoji=str(cp["icon_emoji"]),
+                    description_md=str(cp["description_md"]),
+                    zone_key=str(cp["zone_key"]),
+                    category=str(cp["category"]),
+                    sort_order=int(cp["sort_order"]),  # type: ignore[arg-type]
                 )
             )
 
@@ -541,6 +884,11 @@ def ensure_mulberrylane_seed(workspace_root: Path | None = None) -> UrbanSimProj
                     is_pilot_member=bool(item["is_pilot_member"]),
                     is_active=True,
                     home_zone=str(item["home_zone"]),
+                    avatar_icon=resolve_default_persona_icon(
+                        str(item["role_code"]),
+                        str(item["group_type"]),
+                        str(item["full_name"]),
+                    ),
                     domain_knowledge_prompt=str(item["domain_knowledge_prompt"]),
                     initial_tasks_json=json.dumps(item["initial_tasks"], ensure_ascii=False),
                     portal_url=item.get("portal_url"),

@@ -98,12 +98,13 @@ def _seed_rich_source_workspace(ws: Path) -> dict[str, str]:
                 "name": "Sảnh Lễ Tân A",
                 "zone_type": "LOBBY",
                 "description": "Khu vực sảnh chính",
+                "ambient_signals": "Cổng sảnh đang kiểm tra thẻ từ mới",
                 "sort_order": 1,
             },
         )
         assert z_resp.status_code == 200
 
-        png_bytes = b"\x89PNG\r\n\x1a\n" + b"\x00" * 32
+        png_bytes = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00@\x00\x00\x00@\x08\x02\x00\x00\x00" + b"\x00" * 16
         img_resp = client.post(
             f"/api/v1/urban-sim/projects/{proj_id}/zones/map-image",
             files={"file": ("floorplan.png", png_bytes, "image/png")},
@@ -335,6 +336,7 @@ def test_full_export_and_cross_env_fernet_reencryption_restore(
             )
         ).first()
         assert zone_row is not None
+        assert zone_row.ambient_signals == "Cổng sảnh đang kiểm tra thẻ từ mới"
 
         per_row = session.exec(
             select(UrbanSimPersona).where(

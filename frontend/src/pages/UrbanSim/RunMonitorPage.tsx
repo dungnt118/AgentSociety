@@ -81,10 +81,34 @@ interface ModelRowItem extends ModelCostBreakdown {
 }
 
 interface ParsedSimClock {
+    epochMs: number;
+    offsetMinutes: number;
     time: string;
+    timeWithSeconds: string;
     date: string;
     shortDate: string;
     full: string;
+    fullWithSeconds: string;
+}
+
+function formatEpochPreservingOffset(epochMs: number, offsetMinutes: number): ParsedSimClock {
+    const d = new Date(epochMs + offsetMinutes * 60_000);
+    const hh = String(d.getUTCHours()).padStart(2, "0");
+    const mm = String(d.getUTCMinutes()).padStart(2, "0");
+    const ss = String(d.getUTCSeconds()).padStart(2, "0");
+    const dd = String(d.getUTCDate()).padStart(2, "0");
+    const mo = String(d.getUTCMonth() + 1).padStart(2, "0");
+    const yyyy = d.getUTCFullYear();
+    return {
+        epochMs,
+        offsetMinutes,
+        time: `${hh}:${mm}`,
+        timeWithSeconds: `${hh}:${mm}:${ss}`,
+        date: `${dd}/${mo}/${yyyy}`,
+        shortDate: `${dd}/${mo}`,
+        full: `${hh}:${mm} · ${dd}/${mo}/${yyyy}`,
+        fullWithSeconds: `${hh}:${mm}:${ss} · ${dd}/${mo}/${yyyy}`,
+    };
 }
 
 function parseIsoPreservingTz(iso?: string | null): ParsedSimClock | null {
@@ -110,17 +134,38 @@ function parseIsoPreservingTz(iso?: string | null): ParsedSimClock | null {
         }
     }
 
-    const d = new Date(epochMs + offsetMinutes * 60_000);
-    const hh = String(d.getUTCHours()).padStart(2, "0");
-    const mm = String(d.getUTCMinutes()).padStart(2, "0");
-    const dd = String(d.getUTCDate()).padStart(2, "0");
-    const mo = String(d.getUTCMonth() + 1).padStart(2, "0");
-    const yyyy = d.getUTCFullYear();
+    return formatEpochPreservingOffset(epochMs, offsetMinutes);
+}
+
+function computeInterpolatedSimState(
+    runState: UrbanSimRunState,
+    nowWallMs: number
+): { epochMs: number; subTickFrac: number } | null {
+    const sc = runState.sim_clock;
+    const rawSim = sc?.current_sim_time || runState.run.current_sim_time;
+    if (!rawSim) return null;
+    const baseMs = Date.parse(rawSim);
+    if (Number.isNaN(baseMs)) return null;
+
+    if (!["RUNNING", "STARTING"].includes(runState.run.status)) {
+        return { epochMs: baseMs, subTickFrac: 0 };
+    }
+
+    const tickMs = Math.max(1000, Number(sc?.tick_seconds || 900) * 1000);
+    const tickStartedMs = Date.parse(sc?.tick_started_at || runState.run.started_at || "");
+    const estWallMs = Math.max(15_000, Number(sc?.estimated_tick_wall_seconds || 60) * 1000);
+    const elapsedWall = Number.isFinite(tickStartedMs) ? Math.max(0, nowWallMs - tickStartedMs) : 0;
+    const timeFrac = elapsedWall / estWallMs;
+    const activeTotal = Number(sc?.active_agent_count ?? runState.run.active_agent_count ?? 0);
+    const completedAgents = Number(sc?.agents_completed_in_tick ?? 0);
+    const agentFrac = activeTotal > 0 ? (completedAgents / activeTotal) * 0.9 : 0;
+    const rawFrac = Math.max(agentFrac, timeFrac);
+    const smoothFrac =
+        rawFrac <= 0.85 ? rawFrac : 0.85 + 0.1 * (1 - Math.exp(-(rawFrac - 0.85) * 2.0));
+    const subTickFrac = Math.min(0.95, Math.max(0, smoothFrac));
     return {
-        time: `${hh}:${mm}`,
-        date: `${dd}/${mo}/${yyyy}`,
-        shortDate: `${dd}/${mo}`,
-        full: `${hh}:${mm} · ${dd}/${mo}/${yyyy}`,
+        epochMs: baseMs + Math.round(subTickFrac * tickMs),
+        subTickFrac,
     };
 }
 
@@ -253,6 +298,11 @@ export default function RunMonitorPage() {
         "ALL" | "BQL" | "RESIDENT" | "ACTIVE"
     >("ALL");
     const [agentSortMode, setAgentSortMode] = useState<"ACTIVITY" | "ID">("ACTIVITY");
+    const [liveClockOverride, setLiveClockOverride] = useState<{
+        runId: string;
+        epochMs: number;
+        subTickFrac: number;
+    } | null>(null);
 
     const latestSeqRef = useRef<number>(0);
     const stateDigestRef = useRef<string>("");
@@ -280,6 +330,10 @@ export default function RunMonitorPage() {
                 (ag.incidents_open_count || 0),
             0
         );
+        const posDigest = (st.agent_statuses || [])
+            .map((ag) => `${ag.agent_id}:${ag.current_x_pct ?? ""},${ag.current_y_pct ?? ""},${ag.current_checkpoint_key ?? ""},${ag.movement_status ?? ""},${ag.current_activity ?? ""},${(ag.recent_trail || []).length}`)
+            .join("|");
+        const mapDigest = `${st.digital_map?.map_image_version ?? 0}:${st.zones.length}:${(st.checkpoints || []).length}:${st.recent_movements?.[0]?.seq ?? 0}`;
         const nextDigest = JSON.stringify({
             status: st.run.status,
             step: st.run.step_count,
@@ -289,6 +343,8 @@ export default function RunMonitorPage() {
             seq: st.latest_seq,
             inc: st.incidents.length,
             act: agentActivityDigest,
+            pos: posDigest,
+            map: mapDigest,
         });
         if (forceFull || nextDigest !== stateDigestRef.current) {
             stateDigestRef.current = nextDigest;
@@ -464,6 +520,33 @@ export default function RunMonitorPage() {
         });
     }, [runState, agentTableGroupFilter, agentSortMode]);
 
+    useEffect(() => {
+        if (!runState || !["RUNNING", "STARTING"].includes(runState.run.status)) {
+            return;
+        }
+        const updateClock = () => {
+            const next = computeInterpolatedSimState(runState, Date.now());
+            if (!next) return;
+            setLiveClockOverride((prev) => {
+                const sameRun = prev && prev.runId === runId;
+                const tickMs = Math.max(1000, Number(runState.sim_clock?.tick_seconds || 900) * 1000);
+                const baseMs = Date.parse(
+                    runState.sim_clock?.current_sim_time || runState.run.current_sim_time || ""
+                );
+                const capMs = Number.isNaN(baseMs) ? next.epochMs : baseMs + Math.round(0.95 * tickMs);
+                const monoMs = sameRun ? Math.min(capMs, Math.max(prev.epochMs, next.epochMs)) : next.epochMs;
+                const monoFrac = sameRun ? Math.min(0.95, Math.max(prev.subTickFrac, next.subTickFrac)) : next.subTickFrac;
+                return { runId, epochMs: monoMs, subTickFrac: monoFrac };
+            });
+        };
+        const bootTimer = window.setTimeout(updateClock, 60);
+        const timer = window.setInterval(updateClock, 1000);
+        return () => {
+            window.clearTimeout(bootTimer);
+            window.clearInterval(timer);
+        };
+    }, [runState, runId]);
+
     const mostActiveAgent = useMemo(() => {
         const list = runState?.agent_statuses || [];
         let best: AgentStatusRow | null = null;
@@ -487,12 +570,29 @@ export default function RunMonitorPage() {
         );
     }
 
-    const { run, sim_clock, cost, project, stream_counts, zones, incidents, agent_statuses } = runState;
+    const { run, sim_clock, cost, project, digital_map, stream_counts, zones, checkpoints, recent_movements, incidents, agent_statuses } = runState;
     const openIncidentsCount = incidents.filter((i) => i.status !== "RESOLVED").length;
     const budget = Number(project.max_cost_usd_per_run || 0);
     const budgetPct = budget > 0 ? Math.min(100, Math.round((cost.cost_usd / budget) * 100)) : 0;
 
     const currentSimParsed = parseIsoPreservingTz(sim_clock?.current_sim_time || run.current_sim_time);
+    const isRunningActive = ["RUNNING", "STARTING"].includes(run.status);
+    const displayClock =
+        isRunningActive &&
+        currentSimParsed &&
+        liveClockOverride &&
+        liveClockOverride.runId === runId
+            ? formatEpochPreservingOffset(
+                  Math.max(currentSimParsed.epochMs, liveClockOverride.epochMs),
+                  currentSimParsed.offsetMinutes
+              )
+            : currentSimParsed;
+    const subTickFrac =
+        isRunningActive && liveClockOverride && liveClockOverride.runId === runId
+            ? liveClockOverride.subTickFrac
+            : 0;
+    const completedInTick = sim_clock?.agents_completed_in_tick ?? 0;
+    const activeTotalInTick = sim_clock?.active_agent_count ?? run.active_agent_count ?? agent_statuses.length;
     const startSimParsed = parseIsoPreservingTz(sim_clock?.start_sim_time);
     const endSimParsed = parseIsoPreservingTz(sim_clock?.end_sim_time);
     const tickLabel = formatTickShort(sim_clock?.tick_seconds);
@@ -645,7 +745,7 @@ export default function RunMonitorPage() {
             },
         },
         {
-            title: "Zone & Màn hình",
+            title: "Khu vực & Màn hình",
             dataIndex: "current_url",
             key: "url",
             render: (url: string, row) => (
@@ -790,7 +890,7 @@ export default function RunMonitorPage() {
                                 {run.execution_phase === "POST_QUIZ" && <Tag color="purple">Đang làm Post-Quiz</Tag>}
                                 <Tag>{run.pilot_mode ? "Pilot" : "Full"}</Tag>
                                 <Tag>{run.router_type}</Tag>
-                                {currentSimParsed && (
+                                {displayClock && (
                                     <Tag
                                         icon={isDaytime ? <SunOutlined /> : <MoonOutlined />}
                                         style={{
@@ -800,7 +900,7 @@ export default function RunMonitorPage() {
                                             fontWeight: 600,
                                         }}
                                     >
-                                        {dayLabel} · {currentSimParsed.full} · {dayNightLabel}
+                                        {dayLabel} · {isRunningActive ? displayClock.fullWithSeconds : displayClock.full} · {dayNightLabel}
                                         {sim_clock?.time_band_label_vi ? ` · ${sim_clock.time_band_label_vi}` : ""}
                                     </Tag>
                                 )}
@@ -906,12 +1006,24 @@ export default function RunMonitorPage() {
                                 )}
                             </Space>
                             <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginTop: 2, flexWrap: "wrap" }}>
-                                <span style={{ fontSize: 20, fontWeight: 700, color: clockTheme.primaryText }}>
-                                    {currentSimParsed ? currentSimParsed.time : `${run.step_count} / ${run.total_steps}`}
+                                <span
+                                    data-testid="continuous-sim-clock"
+                                    style={{
+                                        fontSize: 20,
+                                        fontWeight: 700,
+                                        fontVariantNumeric: "tabular-nums",
+                                        color: clockTheme.primaryText,
+                                    }}
+                                >
+                                    {displayClock
+                                        ? isRunningActive
+                                            ? displayClock.timeWithSeconds
+                                            : displayClock.time
+                                        : `${run.step_count} / ${run.total_steps}`}
                                 </span>
-                                {currentSimParsed && (
+                                {displayClock && (
                                     <Text style={{ fontSize: 12, color: clockTheme.secondaryText }}>
-                                        {currentSimParsed.date}
+                                        {displayClock.date}
                                     </Text>
                                 )}
                             </div>
@@ -919,7 +1031,11 @@ export default function RunMonitorPage() {
                                 size="small"
                                 strokeColor={clockTheme.progressStroke}
                                 railColor={clockTheme.progressTrail}
-                                percent={run.total_steps > 0 ? Math.round((run.step_count / run.total_steps) * 100) : 0}
+                                percent={
+                                    run.total_steps > 0
+                                        ? Math.min(100, Math.round(((run.step_count + subTickFrac) / run.total_steps) * 100))
+                                        : 0
+                                }
                                 format={() => (
                                     <span style={{ color: clockTheme.primaryText, fontSize: 11, fontWeight: 600 }}>
                                         B{run.step_count}/{run.total_steps}
@@ -927,7 +1043,9 @@ export default function RunMonitorPage() {
                                 )}
                             />
                             <Text style={{ fontSize: 11, display: "block", color: clockTheme.secondaryText }}>
-                                {sim_clock?.time_band_label_vi || "Đang khởi tạo"}
+                                {isRunningActive
+                                    ? `Chạy liên tục · ${completedInTick}/${activeTotalInTick} tác nhân xong bước B${run.step_count}`
+                                    : sim_clock?.time_band_label_vi || "Đã tạm dừng / Hoàn tất"}
                                 {simWindowRange ? ` · ${simWindowRange}` : ""}
                                 {tickLabel ? ` (${tickLabel})` : ""}
                             </Text>
@@ -994,8 +1112,15 @@ export default function RunMonitorPage() {
                                     <Space direction="vertical" size="middle" style={{ width: "100%" }}>
                                         <UrbanZoneMap
                                             projectId={projectId}
+                                            runId={runId}
                                             hasZoneMapImage={project.has_zone_map_image}
+                                            hasDigitalMap={project.has_digital_map}
+                                            digitalMap={digital_map}
                                             topologyZones={zones}
+                                            checkpoints={checkpoints || []}
+                                            agentStatuses={agent_statuses}
+                                            recentMovements={recent_movements || []}
+                                            onOpenAgentTimeline={openPersonaTimeline}
                                         />
                                         <Card size="small" title={`Danh sách Sự vụ Cư dân ↔ BQL (${incidents.length})`}>
                                             <Table

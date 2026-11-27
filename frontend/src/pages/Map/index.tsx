@@ -98,12 +98,19 @@ const Map: React.FC = () => {
                 method: 'DELETE'
             });
             if (!res.ok) {
-                throw new Error(await res.text());
+                let errDetail = await res.text();
+                try {
+                    const parsed = JSON.parse(errDetail);
+                    if (parsed?.detail) errDetail = String(parsed.detail);
+                } catch {
+                    // keep text
+                }
+                throw new Error(errDetail);
             }
             message.success(t('map.messages.deleteSuccess'));
             loadMaps();
         } catch (error) {
-            message.error(t('map.messages.deleteFailed') + ': ' + JSON.stringify(error.message), 3);
+            message.error(t('map.messages.deleteFailed') + ': ' + (error instanceof Error ? error.message : String(error)), 4);
             console.error(error);
         }
     };
@@ -138,14 +145,26 @@ const Map: React.FC = () => {
                 });
             }
             if (!res.ok) {
-                throw new Error(await res.text());
+                let errDetail = await res.text();
+                try {
+                    const parsed = JSON.parse(errDetail);
+                    if (parsed?.detail) errDetail = String(parsed.detail);
+                } catch {
+                    // keep text
+                }
+                throw new Error(errDetail);
             }
 
             message.success(currentMap ? t('map.messages.updateSuccess') : t('map.messages.createSuccess'));
             setIsModalVisible(false);
             loadMaps();
         } catch (error) {
-            message.error((currentMap ? t('map.messages.updateFailed') : t('map.messages.createFailed')) + ': ' + JSON.stringify(error.message), 3);
+            message.error(
+                (currentMap ? t('map.messages.updateFailed') : t('map.messages.createFailed')) +
+                    ': ' +
+                    (error instanceof Error ? error.message : String(error)),
+                4
+            );
             console.error('Validation failed:', error);
         }
     };
@@ -157,33 +176,29 @@ const Map: React.FC = () => {
 
     // Update parent component state when form values change
     const handleValuesChange = (_changedValues: Record<string, unknown>, allValues: Record<string, unknown>) => {
-        console.log('changedValues', _changedValues);
-        console.log('allValues', allValues);
         const filePath = allValues.file_path as { file?: { status?: string; response?: { data?: { file_path?: string } } } } | undefined;
         const file = filePath?.file;
-        if (file && file.status === 'done') {
-            setFormValues({
-                file_path: file.response.data.file_path,
-            });
-        } else {
-            setFormValues({
-                file_path: null,
-            });
+        if (file && file.status === 'done' && file.response?.data?.file_path) {
+            setFormValues((prev) => ({
+                ...prev,
+                file_path: file.response?.data?.file_path,
+            }));
         }
     };
 
     const uploadProps = {
         name: 'file',
         multiple: false,
+        accept: '.pb',
         action: '/api/map-configs/-/upload',
         headers: WITH_AUTH ? {
             Authorization: `Bearer ${getAccessToken()}`
         } : {},
-        beforeUpload: (file) => {
+        beforeUpload: (file: File) => {
             const lower = file.name.toLowerCase();
-            if (!['.pb', '.png', '.jpg', '.jpeg', '.webp'].some((ext) => lower.endsWith(ext))) {
-                message.error("Chỉ hỗ trợ bản đồ .pb hoặc ảnh mặt bằng 2D (.png, .jpg, .webp)");
-                return false;
+            if (!lower.endsWith('.pb')) {
+                message.error("Menu /maps chỉ nhận tệp bản đồ giao thông .pb. Ảnh mặt bằng 2D và Bản đồ Số Khu đô thị được quản lý tại /urban-sim.");
+                return Upload.LIST_IGNORE;
             }
             return true;
         },
@@ -192,9 +207,19 @@ const Map: React.FC = () => {
             if (status === 'done') {
                 message.success(t('map.messages.uploadSuccess'));
             } else if (status === 'error') {
-                message.error(t('map.messages.uploadFailed'));
+                const detail = info.file?.response?.detail;
+                message.error(detail ? String(detail) : t('map.messages.uploadFailed'));
             }
         },
+    };
+
+    const isUrbanLinked = (record: ConfigWrapper<MapConfig>) => {
+        const cfg = record.config as (MapConfig & { map_type?: string; linked_project_id?: string; managed_by?: string }) | undefined;
+        return Boolean(
+            cfg?.managed_by === 'urban_sim' ||
+            cfg?.map_type === 'urban_zones' ||
+            (cfg?.linked_project_id || '').trim()
+        );
     };
 
     // Table columns
@@ -203,12 +228,12 @@ const Map: React.FC = () => {
             title: t('common.name'),
             dataIndex: 'name',
             key: 'name',
-            render: (text: string, record: ConfigWrapper<MapConfig & { map_type?: string }>) => (
+            render: (text: string, record: ConfigWrapper<MapConfig & { map_type?: string; managed_by?: string }>) => (
                 <Space size={6} wrap>
                     <span>{text}</span>
-                    {record.config?.map_type === 'urban_zones' && <Tag color="blue">Zone Topology v2</Tag>}
-                    {record.config?.map_type === 'image_2d' && <Tag color="green">Sơ đồ 2D</Tag>}
-                    {record.config?.map_type === 'protobuf' && <Tag>Protobuf (.pb)</Tag>}
+                    {isUrbanLinked(record) && <Tag color="blue">Bản đồ Số UrbanSim</Tag>}
+                    {record.config?.map_type === 'image_2d' && <Tag color="green">Sơ đồ 2D (Di sản)</Tag>}
+                    {record.config?.map_type === 'protobuf' && <Tag>Giao thông .pb</Tag>}
                 </Space>
             ),
         },
@@ -227,62 +252,65 @@ const Map: React.FC = () => {
         {
             title: t('common.actions'),
             key: 'action',
-            render: (_: unknown, record: ConfigWrapper<MapConfig>) => (
-                <Space size="small">
-                    {
-                        (record.tenant_id ?? '') !== '' && (
+            render: (_: unknown, record: ConfigWrapper<MapConfig>) => {
+                const linkedProjectId = ((record.config as (MapConfig & { linked_project_id?: string }))?.linked_project_id || '').trim();
+                const lockedUrban = isUrbanLinked(record);
+                return (
+                    <Space size="small">
+                        {!lockedUrban && (record.tenant_id ?? '') !== '' && (
                             <Tooltip title={t('common.edit')}>
                                 <Button icon={<EditOutlined />} size="small" onClick={() => handleEdit(record)} />
                             </Tooltip>
-                        )
-                    }
-                    {(record.config as (MapConfig & { linked_project_id?: string }))?.linked_project_id ? (
-                        <Tooltip title="Mở Zone Map trong Mô phỏng Khu đô thị">
+                        )}
+                        {lockedUrban ? (
                             <Button
+                                type="primary"
+                                ghost
                                 icon={<ApartmentOutlined />}
                                 size="small"
-                                onClick={() => navigate('/urban-sim')}
-                            />
-                        </Tooltip>
-                    ) : (
-                        <Tooltip title={t('common.view')}>
-                            <Button icon={<EyeOutlined />} size="small" onClick={async () => {
-                            // get token
-                            const url = `/api/map-configs/${record.id}/temp-link`
-                            try {
-                                const res = await fetchCustom(url, {
-                                    method: 'POST',
-                                    headers: {
-                                        'Content-Type': 'application/json',
-                                    },
-                                    body: JSON.stringify({ expire_seconds: 600 }),
-                                })
-                                if (!res.ok) {
-                                    throw new Error(await res.text());
+                                onClick={() =>
+                                    navigate(
+                                        linkedProjectId
+                                            ? `/urban-sim?projectId=${encodeURIComponent(linkedProjectId)}&focus=map`
+                                            : '/urban-sim?focus=map'
+                                    )
                                 }
-                                const data = await res.json();
-                                const token = data.data.token;
-                                // create temp-link url
-                                // format: ${window.location.origin}/api/map-configs/{config_id}/temp-link?token=${token}
-                                const tempLinkUrl = `${window.location.origin}/api/map-configs/${record.id}/temp-link?token=${token}`;
-                                // open in new tab
-                                // format: https://moss.fiblab.net/tools/map-editor?dataSource=${tempLinkUrl}
-                                window.open(`https://moss.fiblab.net/tools/map-editor?dataSource=${tempLinkUrl}`, '_blank');
-                            } catch (error) {
-                                message.error(`Failed to get temp link: ${JSON.stringify(error.message)}`, 3);
-                                console.error(error);
-                            }
-                        }} />
+                            >
+                                Mở Bản đồ Số
+                            </Button>
+                        ) : (
+                            <Tooltip title={t('common.view')}>
+                                <Button icon={<EyeOutlined />} size="small" onClick={async () => {
+                                const url = `/api/map-configs/${record.id}/temp-link`
+                                try {
+                                    const res = await fetchCustom(url, {
+                                        method: 'POST',
+                                        headers: {
+                                            'Content-Type': 'application/json',
+                                        },
+                                        body: JSON.stringify({ expire_seconds: 600 }),
+                                    })
+                                    if (!res.ok) {
+                                        throw new Error(await res.text());
+                                    }
+                                    const data = await res.json();
+                                    const token = data.data.token;
+                                    const tempLinkUrl = `${window.location.origin}/api/map-configs/${record.id}/temp-link?token=${token}`;
+                                    window.open(`https://moss.fiblab.net/tools/map-editor?dataSource=${tempLinkUrl}`, '_blank');
+                                } catch (error) {
+                                    message.error(`Failed to get temp link: ${error instanceof Error ? error.message : String(error)}`, 3);
+                                    console.error(error);
+                                }
+                            }} />
+                            </Tooltip>
+                        )}
+                        <Tooltip title={t('common.export')}>
+                            <Button icon={<DownloadOutlined />} size="small" onClick={() => {
+                                postDownloadCustom(`/api/map-configs/${record.id}/export`)
+                            }} />
                         </Tooltip>
-                    )}
-                    <Tooltip title={t('common.export')}>
-                        <Button icon={<DownloadOutlined />} size="small" onClick={() => {
-                            postDownloadCustom(`/api/map-configs/${record.id}/export`)
-                        }} />
-                    </Tooltip>
 
-                    {
-                        (record.tenant_id ?? '') !== '' && (
+                        {!lockedUrban && (record.tenant_id ?? '') !== '' && (
                             <Tooltip title={t('common.delete')}>
                                 <Popconfirm
                                     title={t('common.deleteConfirm')}
@@ -293,10 +321,10 @@ const Map: React.FC = () => {
                                     <Button icon={<DeleteOutlined />} size="small" danger />
                                 </Popconfirm>
                             </Tooltip>
-                        )
-                    }
-                </Space>
-            )
+                        )}
+                    </Space>
+                );
+            }
         }
     ];
 
@@ -305,6 +333,23 @@ const Map: React.FC = () => {
             title={t('map.title')}
             extra={<Button type="primary" icon={<PlusOutlined />} onClick={handleCreate}>{t('map.createNew')}</Button>}
         >
+            <Alert
+                type="info"
+                showIcon
+                style={{ marginBottom: 16 }}
+                message="Phân biệt Bản đồ Giao thông (.pb) và Bản đồ Số Khu đô thị"
+                description={
+                    <Space direction="vertical" size={4}>
+                        <span>
+                            Trang này chỉ quản lý bản đồ giao thông mạng lưới đường phố <strong>.pb (mosstool)</strong> cho Thí nghiệm v1.
+                            Mặt bằng 2D, đa giác Khu vực (Polygon) và các Chốt/Pin tuần tra/tiện ích được thiết kế trực tiếp trong <strong>Mô phỏng Khu đô thị (/urban-sim)</strong>.
+                        </span>
+                        <Button type="link" size="small" style={{ paddingLeft: 0 }} icon={<ApartmentOutlined />} onClick={() => navigate('/urban-sim?focus=map')}>
+                            Đi tới Bản đồ Số Khu đô thị (/urban-sim)
+                        </Button>
+                    </Space>
+                }
+            />
             <Input.Search
                 placeholder={t('map.searchPlaceholder')}
                 onChange={handleSearch}

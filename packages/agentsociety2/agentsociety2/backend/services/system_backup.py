@@ -54,6 +54,7 @@ from agentsociety2.backend.services.urban_sim.crypto import (
 )
 from agentsociety2.backend.services.urban_sim.db import (
     UrbanSimAtlasConfig,
+    UrbanSimCheckpoint,
     UrbanSimPersona,
     UrbanSimProject,
     UrbanSimRun,
@@ -61,6 +62,7 @@ from agentsociety2.backend.services.urban_sim.db import (
     get_engine,
     init_urban_sim_db,
 )
+from agentsociety2.backend.services.urban_sim.map_generator import parse_image_dimensions
 from agentsociety2.backend.services.urban_sim.seed_mulberrylane import (
     ensure_mulberrylane_seed,
 )
@@ -390,6 +392,7 @@ def get_backup_inventory(workspace_root: Path) -> dict[str, Any]:
         llm_rows = session.exec(select(PlatformLLMConfig)).all()
         proj_rows = session.exec(select(UrbanSimProject)).all()
         zone_rows = session.exec(select(UrbanSimZone)).all()
+        checkpoint_rows = session.exec(select(UrbanSimCheckpoint)).all()
         persona_rows = session.exec(select(UrbanSimPersona)).all()
         atlas_rows = session.exec(select(UrbanSimAtlasConfig)).all()
         map_rows = session.exec(select(PlatformMapConfig)).all()
@@ -418,6 +421,9 @@ def get_backup_inventory(workspace_root: Path) -> dict[str, Any]:
         zones_by_proj: dict[str, int] = {}
         for z in zone_rows:
             zones_by_proj[z.project_id] = zones_by_proj.get(z.project_id, 0) + 1
+        checkpoints_by_proj: dict[str, int] = {}
+        for cp in checkpoint_rows:
+            checkpoints_by_proj[cp.project_id] = checkpoints_by_proj.get(cp.project_id, 0) + 1
         personas_by_proj: dict[str, int] = {}
         for p in persona_rows:
             personas_by_proj[p.project_id] = personas_by_proj.get(p.project_id, 0) + 1
@@ -428,6 +434,7 @@ def get_backup_inventory(workspace_root: Path) -> dict[str, Any]:
                 "slug": p.slug,
                 "name": p.name,
                 "zones_count": zones_by_proj.get(p.id, 0),
+                "checkpoints_count": checkpoints_by_proj.get(p.id, 0),
                 "personas_count": personas_by_proj.get(p.id, 0),
                 "has_zone_map_image": bool(p.zone_map_image_rel),
             }
@@ -463,7 +470,10 @@ def get_backup_inventory(workspace_root: Path) -> dict[str, Any]:
         if key == "llm_configs":
             item["extra"] = {"secrets_count": llm_secrets}
         elif key == "urban_sim_zones":
-            item["extra"] = {"map_images_count": zone_map_files}
+            item["extra"] = {
+                "map_images_count": zone_map_files,
+                "checkpoints_count": len(checkpoint_rows),
+            }
         elif key == "urban_sim_personas":
             item["extra"] = {"secrets_count": persona_secrets}
         elif key == "urban_sim_atlas_configs":
@@ -610,6 +620,12 @@ def export_backup_zip(
                     "max_cost_usd_per_run": float(p.max_cost_usd_per_run),
                     "pilot_mode": bool(p.pilot_mode),
                     "zone_map_image_rel": p.zone_map_image_rel,
+                    "map_prompt": getattr(p, "map_prompt", None),
+                    "map_width": getattr(p, "map_width", None),
+                    "map_height": getattr(p, "map_height", None),
+                    "map_aspect_ratio": getattr(p, "map_aspect_ratio", None),
+                    "map_image_version": int(getattr(p, "map_image_version", 0) or 0),
+                    "map_image_updated_at": getattr(p, "map_image_updated_at", None),
                     "llm_config_id": p.llm_config_id,
                     "enable_sociological_debrief": bool(
                         getattr(p, "enable_sociological_debrief", True)
@@ -626,7 +642,7 @@ def export_backup_zip(
             _put_json("data/urban_sim_projects.json", proj_records)
             counts["urban_sim_projects"] = len(proj_records)
 
-        # 3. urban_sim_zones
+        # 3. urban_sim_zones (+ polygon geometry & urban_sim_checkpoints)
         if "urban_sim_zones" in selected_scopes:
             zones = session.exec(select(UrbanSimZone)).all()
             filtered_zones = [z for z in zones if z.project_id in target_proj_ids]
@@ -639,9 +655,33 @@ def export_backup_zip(
                     "name": z.name,
                     "zone_type": z.zone_type,
                     "description": z.description,
+                    "ambient_signals": z.ambient_signals,
                     "sort_order": int(z.sort_order),
+                    "center_x_pct": getattr(z, "center_x_pct", None),
+                    "center_y_pct": getattr(z, "center_y_pct", None),
+                    "polygon_points_json": getattr(z, "polygon_points_json", None),
+                    "fill_color": getattr(z, "fill_color", None),
                 }
                 for z in filtered_zones
+            ]
+            cps = session.exec(select(UrbanSimCheckpoint)).all()
+            filtered_cps = [cp for cp in cps if cp.project_id in target_proj_ids]
+            cp_records = [
+                {
+                    "id": cp.id,
+                    "project_id": cp.project_id,
+                    "project_slug": proj_slug_by_id.get(cp.project_id, ""),
+                    "checkpoint_key": cp.checkpoint_key,
+                    "name": cp.name,
+                    "x_pct": float(cp.x_pct),
+                    "y_pct": float(cp.y_pct),
+                    "icon_emoji": cp.icon_emoji,
+                    "description_md": cp.description_md,
+                    "zone_key": cp.zone_key,
+                    "category": cp.category,
+                    "sort_order": int(cp.sort_order),
+                }
+                for cp in filtered_cps
             ]
             # Export associated 2D zone map images
             map_image_refs: dict[str, str] = {}
@@ -659,7 +699,11 @@ def export_backup_zip(
                     warnings.append(f"Bỏ qua ảnh bản đồ 2D không hợp lệ của dự án '{p.slug}': {fname}")
             _put_json(
                 "data/urban_sim_zones.json",
-                {"zones": zone_records, "project_map_images": map_image_refs},
+                {
+                    "zones": zone_records,
+                    "checkpoints": cp_records,
+                    "project_map_images": map_image_refs,
+                },
             )
             counts["urban_sim_zones"] = len(zone_records)
 
@@ -699,10 +743,16 @@ def export_backup_zip(
                         "is_pilot_member": bool(per.is_pilot_member),
                         "is_active": bool(per.is_active),
                         "home_zone": per.home_zone,
+                        "avatar_icon": getattr(per, "avatar_icon", None),
                         "domain_knowledge_prompt": per.domain_knowledge_prompt,
                         "initial_tasks_json": per.initial_tasks_json,
                         "portal_url": per.portal_url,
                         "login_username": per.login_username,
+                        "default_activated_skill_ids_json": getattr(
+                            per, "default_activated_skill_ids_json", None
+                        ),
+                        "disabled_skill_ids_json": getattr(per, "disabled_skill_ids_json", None),
+                        "profile_traits_json": getattr(per, "profile_traits_json", None),
                         "has_secret": bool(enc),
                         "secret_ref_key": skey if enc else "",
                         "created_at": per.created_at,
@@ -1250,10 +1300,16 @@ def preview_restore(
         if "urban_sim_zones" in effective_scopes:
             z_payload = _read_pkg_json(pkg, "data/urban_sim_zones.json", {})
             inc_zones = z_payload.get("zones", []) if isinstance(z_payload, dict) else []
+            inc_cps = z_payload.get("checkpoints", []) if isinstance(z_payload, dict) else []
             if slug_filter is not None:
                 inc_zones = [z for z in inc_zones if z.get("project_slug") in slug_filter]
+                inc_cps = [c for c in inc_cps if c.get("project_slug") in slug_filter]
             existing_zone_keys = {
                 (z.project_id, z.zone_key): z for z in existing_zones
+            }
+            existing_cp_rows = session.exec(select(UrbanSimCheckpoint)).all()
+            existing_cp_keys = {
+                (c.project_id, c.checkpoint_key): c for c in existing_cp_rows
             }
             creates, updates, deletes = [], [], []
             for z in inc_zones:
@@ -1268,8 +1324,20 @@ def preview_restore(
                     updates.append(f"{pslug}:{z.get('zone_key')}")
                 else:
                     creates.append(f"{pslug}:{z.get('zone_key')}")
+            for cp in inc_cps:
+                pslug = str(cp.get("project_slug") or "")
+                tpid = target_proj_id_by_slug.get(pslug) or str(cp.get("project_id") or "")
+                if tpid not in target_proj_id_by_slug.values() and tpid not in proj_by_id:
+                    continue
+                ckey = str(cp.get("checkpoint_key") or "")
+                if mode == "MERGE_UPSERT" and (tpid, ckey) in existing_cp_keys:
+                    updates.append(f"[Chốt] {pslug}:{ckey}")
+                else:
+                    creates.append(f"[Chốt] {pslug}:{ckey}")
             if mode == "REPLACE_SCOPE":
-                deletes = [f"{z.project_id}:{z.zone_key}" for z in existing_zones]
+                deletes = [f"{z.project_id}:{z.zone_key}" for z in existing_zones] + [
+                    f"[Chốt] {c.project_id}:{c.checkpoint_key}" for c in existing_cp_rows
+                ]
             scope_diffs.append(_make_diff("urban_sim_zones", creates, updates, deletes))
 
         if "urban_sim_personas" in effective_scopes:
@@ -1629,6 +1697,9 @@ def execute_restore(
                         session.delete(row)
                         applied_counts["urban_sim_personas"]["deleted"] += 1
                 if "urban_sim_zones" in effective_scopes:
+                    # Clear UrbanSimCheckpoint before UrbanSimZone to preserve FK integrity
+                    for row in session.exec(select(UrbanSimCheckpoint)).all():
+                        session.delete(row)
                     for row in session.exec(select(UrbanSimZone)).all():
                         session.delete(row)
                         applied_counts["urban_sim_zones"]["deleted"] += 1
@@ -1640,7 +1711,11 @@ def execute_restore(
                                 f"Giữ lại bản ghi dự án '{row.name}' ({row.slug}) do đang có lịch sử Run; sẽ cập nhật cấu hình tại chỗ."
                             )
                         else:
-                            # Remove child rows first if those scopes weren't explicitly cleared
+                            # Remove child rows in reverse FK order BEFORE deleting UrbanSimProject
+                            for c_cp in session.exec(
+                                select(UrbanSimCheckpoint).where(UrbanSimCheckpoint.project_id == row.id)
+                            ).all():
+                                session.delete(c_cp)
                             for c_atlas in session.exec(
                                 select(UrbanSimAtlasConfig).where(UrbanSimAtlasConfig.project_id == row.id)
                             ).all():
@@ -1810,6 +1885,18 @@ def execute_restore(
                         existing.pilot_mode = bool(ip.get("pilot_mode", existing.pilot_mode))
                         if "zone_map_image_rel" in ip and ip.get("zone_map_image_rel"):
                             existing.zone_map_image_rel = Path(str(ip["zone_map_image_rel"])).name
+                        if "map_prompt" in ip:
+                            existing.map_prompt = ip.get("map_prompt")
+                        if ip.get("map_width") is not None:
+                            existing.map_width = int(ip["map_width"])
+                        if ip.get("map_height") is not None:
+                            existing.map_height = int(ip["map_height"])
+                        if ip.get("map_aspect_ratio") is not None:
+                            existing.map_aspect_ratio = float(ip["map_aspect_ratio"])
+                        if ip.get("map_image_version") is not None:
+                            existing.map_image_version = int(ip["map_image_version"])
+                        if "map_image_updated_at" in ip:
+                            existing.map_image_updated_at = ip.get("map_image_updated_at")
                         existing.llm_config_id = mapped_llm_id
                         existing.enable_sociological_debrief = bool(
                             ip.get("enable_sociological_debrief", True)
@@ -1847,6 +1934,16 @@ def execute_restore(
                                 if ip.get("zone_map_image_rel")
                                 else None
                             ),
+                            map_prompt=ip.get("map_prompt"),
+                            map_width=int(ip["map_width"]) if ip.get("map_width") is not None else None,
+                            map_height=int(ip["map_height"]) if ip.get("map_height") is not None else None,
+                            map_aspect_ratio=(
+                                float(ip["map_aspect_ratio"])
+                                if ip.get("map_aspect_ratio") is not None
+                                else None
+                            ),
+                            map_image_version=int(ip.get("map_image_version") or 0),
+                            map_image_updated_at=ip.get("map_image_updated_at"),
                             llm_config_id=mapped_llm_id,
                             enable_sociological_debrief=bool(
                                 ip.get("enable_sociological_debrief", True)
@@ -1874,10 +1971,11 @@ def execute_restore(
                     return raw_pid
                 return None
 
-            # 3. urban_sim_zones
+            # 3. urban_sim_zones (+ polygon geometry & checkpoints)
             if "urban_sim_zones" in effective_scopes:
                 z_payload = _read_pkg_json(pkg, "data/urban_sim_zones.json", {})
                 inc_zones = z_payload.get("zones", []) if isinstance(z_payload, dict) else []
+                inc_cps = z_payload.get("checkpoints", []) if isinstance(z_payload, dict) else []
                 map_img_refs = (
                     z_payload.get("project_map_images", {})
                     if isinstance(z_payload, dict)
@@ -1885,6 +1983,7 @@ def execute_restore(
                 )
                 if slug_filter is not None:
                     inc_zones = [z for z in inc_zones if z.get("project_slug") in slug_filter]
+                    inc_cps = [c for c in inc_cps if c.get("project_slug") in slug_filter]
 
                 for iz in inc_zones:
                     pslug = str(iz.get("project_slug") or "")
@@ -1901,11 +2000,24 @@ def execute_restore(
                             UrbanSimZone.zone_key == zkey,
                         )
                     ).first()
+                    cx = float(iz["center_x_pct"]) if iz.get("center_x_pct") is not None else None
+                    cy = float(iz["center_y_pct"]) if iz.get("center_y_pct") is not None else None
+                    poly_json = iz.get("polygon_points_json")
+                    fcolor = iz.get("fill_color")
                     if existing_z is not None:
                         existing_z.name = str(iz.get("name") or existing_z.name)
                         existing_z.zone_type = str(iz.get("zone_type") or existing_z.zone_type)
                         existing_z.description = str(iz.get("description") or "")
+                        existing_z.ambient_signals = str(iz.get("ambient_signals") or "")
                         existing_z.sort_order = int(iz.get("sort_order") or 0)
+                        if "center_x_pct" in iz:
+                            existing_z.center_x_pct = cx
+                        if "center_y_pct" in iz:
+                            existing_z.center_y_pct = cy
+                        if "polygon_points_json" in iz:
+                            existing_z.polygon_points_json = poly_json
+                        if "fill_color" in iz:
+                            existing_z.fill_color = fcolor
                         session.add(existing_z)
                         applied_counts["urban_sim_zones"]["updated"] += 1
                     else:
@@ -1917,28 +2029,89 @@ def execute_restore(
                                 name=str(iz.get("name") or zkey),
                                 zone_type=str(iz.get("zone_type") or "OFFICE"),
                                 description=str(iz.get("description") or ""),
+                                ambient_signals=str(iz.get("ambient_signals") or ""),
                                 sort_order=int(iz.get("sort_order") or 0),
+                                center_x_pct=cx,
+                                center_y_pct=cy,
+                                polygon_points_json=poly_json,
+                                fill_color=fcolor,
                             )
                         )
                         applied_counts["urban_sim_zones"]["created"] += 1
 
-                # Restore 2D zone map image files & link to project (bare filename contract)
+                # Restore urban_sim_checkpoints (if present; legacy v1.0 zips cleanly skip)
+                for icp in inc_cps:
+                    pslug = str(icp.get("project_slug") or "")
+                    tpid = _resolve_target_project_id(pslug, str(icp.get("project_id") or ""))
+                    if not tpid:
+                        continue
+                    cpkey = str(icp.get("checkpoint_key") or "").strip()
+                    if not cpkey:
+                        continue
+                    existing_cp = session.exec(
+                        select(UrbanSimCheckpoint).where(
+                            UrbanSimCheckpoint.project_id == tpid,
+                            UrbanSimCheckpoint.checkpoint_key == cpkey,
+                        )
+                    ).first()
+                    if existing_cp is not None:
+                        existing_cp.name = str(icp.get("name") or cpkey)
+                        existing_cp.x_pct = float(icp.get("x_pct") or 50.0)
+                        existing_cp.y_pct = float(icp.get("y_pct") or 50.0)
+                        existing_cp.icon_emoji = str(icp.get("icon_emoji") or "📍")
+                        existing_cp.description_md = str(icp.get("description_md") or "")
+                        existing_cp.zone_key = icp.get("zone_key")
+                        existing_cp.category = str(icp.get("category") or "general")
+                        existing_cp.sort_order = int(icp.get("sort_order") or 0)
+                        existing_cp.updated_at = _utcnow_iso()
+                        session.add(existing_cp)
+                    else:
+                        session.add(
+                            UrbanSimCheckpoint(
+                                id=f"cp_{uuid.uuid4().hex[:12]}",
+                                project_id=tpid,
+                                checkpoint_key=cpkey,
+                                name=str(icp.get("name") or cpkey),
+                                x_pct=float(icp.get("x_pct") or 50.0),
+                                y_pct=float(icp.get("y_pct") or 50.0),
+                                icon_emoji=str(icp.get("icon_emoji") or "📍"),
+                                description_md=str(icp.get("description_md") or ""),
+                                zone_key=icp.get("zone_key"),
+                                category=str(icp.get("category") or "general"),
+                                sort_order=int(icp.get("sort_order") or 0),
+                            )
+                        )
+
+                # Restore 2D zone map image files atomically & recompute dimensions (also handles legacy v1.0 zips)
                 for pslug, rel_path in (map_img_refs or {}).items():
                     if slug_filter is not None and pslug not in slug_filter:
                         continue
                     fname = Path(str(rel_path)).name
                     arc = f"files/urban_sim_maps/{fname}"
                     if arc in pkg.files:
+                        img_bytes = pkg.files[arc]
                         tpid = proj_slug_to_id.get(pslug)
                         suffix = Path(fname).suffix.lower() or ".png"
-                        dest_fname = f"{tpid}{suffix}" if tpid else fname
+                        hash8 = _sha256_bytes(img_bytes)[:8]
+                        dest_fname = f"{tpid}_{hash8}{suffix}" if tpid else fname
                         dest = resolve_urban_sim_map_image(workspace_root, dest_fname)
                         dest.parent.mkdir(parents=True, exist_ok=True)
-                        dest.write_bytes(pkg.files[arc])
+                        tmp_dest = dest.with_name(f".tmp_{uuid.uuid4().hex[:8]}_{dest_fname}")
+                        tmp_dest.write_bytes(img_bytes)
+                        os.replace(tmp_dest, dest)
                         if tpid:
                             proj_obj = session.get(UrbanSimProject, tpid)
                             if proj_obj is not None:
                                 proj_obj.zone_map_image_rel = dest_fname
+                                proj_obj.map_image_version = int(getattr(proj_obj, "map_image_version", 0) or 0) + 1
+                                proj_obj.map_image_updated_at = _utcnow_iso()
+                                try:
+                                    w, h = parse_image_dimensions(img_bytes, suffix)
+                                    proj_obj.map_width = w
+                                    proj_obj.map_height = h
+                                    proj_obj.map_aspect_ratio = round(w / max(1, h), 4)
+                                except ValueError:
+                                    pass
                                 session.add(proj_obj)
 
             # 4. urban_sim_personas
@@ -1987,6 +2160,7 @@ def execute_restore(
                         existing_per.is_pilot_member = bool(ip.get("is_pilot_member", False))
                         existing_per.is_active = bool(ip.get("is_active", True))
                         existing_per.home_zone = str(ip.get("home_zone") or "LOBBY_MAIN")
+                        existing_per.avatar_icon = ip.get("avatar_icon")
                         existing_per.domain_knowledge_prompt = str(
                             ip.get("domain_knowledge_prompt") or ""
                         )
@@ -1995,6 +2169,13 @@ def execute_restore(
                         )
                         existing_per.portal_url = ip.get("portal_url")
                         existing_per.login_username = ip.get("login_username")
+                        existing_per.default_activated_skill_ids_json = ip.get(
+                            "default_activated_skill_ids_json"
+                        )
+                        existing_per.disabled_skill_ids_json = ip.get(
+                            "disabled_skill_ids_json"
+                        )
+                        existing_per.profile_traits_json = ip.get("profile_traits_json")
                         existing_per.login_password_enc = resolved_pw_enc
                         existing_per.updated_at = _utcnow_iso()
                         session.add(existing_per)
@@ -2016,12 +2197,20 @@ def execute_restore(
                                 is_pilot_member=bool(ip.get("is_pilot_member", False)),
                                 is_active=bool(ip.get("is_active", True)),
                                 home_zone=str(ip.get("home_zone") or "LOBBY_MAIN"),
+                                avatar_icon=ip.get("avatar_icon"),
                                 domain_knowledge_prompt=str(
                                     ip.get("domain_knowledge_prompt") or ""
                                 ),
                                 initial_tasks_json=str(ip.get("initial_tasks_json") or "[]"),
                                 portal_url=ip.get("portal_url"),
                                 login_username=ip.get("login_username"),
+                                default_activated_skill_ids_json=ip.get(
+                                    "default_activated_skill_ids_json"
+                                ),
+                                disabled_skill_ids_json=ip.get(
+                                    "disabled_skill_ids_json"
+                                ),
+                                profile_traits_json=ip.get("profile_traits_json"),
                                 login_password_enc=resolved_pw_enc,
                                 created_at=str(ip.get("created_at") or _utcnow_iso()),
                                 updated_at=_utcnow_iso(),

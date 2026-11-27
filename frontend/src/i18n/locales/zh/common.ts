@@ -6,7 +6,7 @@ export default {
         github: 'GitHub',
         v2: 'AgentSociety 2',
         llmConfigs: 'LLM',
-        maps: '地图',
+        maps: '交通地图 (.pb)',
         agents: '智能体',
         agentConfigs: '智能体配置',
         agentTemplates: '智能体模板',
@@ -19,7 +19,7 @@ export default {
         demoUser: '示例用户',
         bill: '账单',
         profiles: '智能体画像',
-        skills: 'Agent Skills',
+        skills: '智能体技能',
         systemBackup: '备份与恢复',
     },
     common: {

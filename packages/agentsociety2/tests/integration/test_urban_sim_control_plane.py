@@ -298,8 +298,8 @@ def test_l1_tc_01_seed_ssrf_atlas_and_map_upload(tmp_path: Path, monkeypatch):
             )
             assert bad_upload.status_code == 400
 
-            # Upload valid PNG magic bytes -> 200 & streams with nosniff
-            valid_png = b"\x89PNG\r\n\x1a\n" + b"\x00" * 64
+            # Upload valid PNG header bytes -> 200 & streams with nosniff
+            valid_png = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00@\x00\x00\x00@\x08\x02\x00\x00\x00" + b"\x00" * 35
             ok_upload = client.post(
                 f"/api/v1/urban-sim/projects/{pid}/zones/map-image",
                 headers=headers,
@@ -958,11 +958,16 @@ async def test_l1_tc_08_autonomous_resident_profile_and_building_context(tmp_pat
             assert "bồn rửa" not in r.domain_knowledge_prompt.lower()
             assert "30k-456.78" not in r.domain_knowledge_prompt.lower()
 
+        from agentsociety2.backend.services.urban_sim.db import UrbanSimZone
+
+        zones_db = list(
+            sess.exec(select(UrbanSimZone).where(UrbanSimZone.project_id == proj.id)).all()
+        )
         bundle = compile_run_from_db(
             project=p_row,
             personas=personas,
             atlas=atlas,
-            zones=[],
+            zones=zones_db,
             run_dir=tmp_path / "autonomous_compile",
             workspace_root=tmp_path,
         )
@@ -1004,7 +1009,16 @@ async def test_l1_tc_08_autonomous_resident_profile_and_building_context(tmp_pat
             }
             for p in personas
         ],
-        zones=[{"zone_key": "TOWER_A", "name": "Tòa A", "zone_type": "TOWER", "description": ""}],
+        zones=[
+            {
+                "zone_key": z.zone_key,
+                "name": z.name,
+                "zone_type": z.zone_type,
+                "description": z.description,
+                "ambient_signals": z.ambient_signals,
+            }
+            for z in zones_db
+        ],
         bql_agent_ids=[p.agent_id for p in personas if p.group_type == "BQL"],
         resident_agent_ids=[p.agent_id for p in personas if p.group_type == "RESIDENT"],
     )
@@ -1127,8 +1141,20 @@ async def test_l1_tc_10_click_web_text_and_dom_filter_and_zone_signals(tmp_path:
                 {"agent_id": 14, "full_name": "Cư dân C", "role_code": "RESIDENT", "role_title": "Chủ hộ", "group_type": "RESIDENT", "home_zone": "TOWER_C"},
             ],
             zones=[
-                {"zone_key": "TOWER_A", "name": "Zen ZA", "zone_type": "TOWER", "description": ""},
-                {"zone_key": "TOWER_C", "name": "Fantasy", "zone_type": "TOWER", "description": ""},
+                {
+                    "zone_key": "TOWER_A",
+                    "name": "Zen ZA",
+                    "zone_type": "TOWER",
+                    "description": "Khối căn hộ ZA",
+                    "ambient_signals": "Tín hiệu động ZA: kiểm tra áp lực nước và thẻ xe hầm.",
+                },
+                {
+                    "zone_key": "TOWER_C",
+                    "name": "Fantasy",
+                    "zone_type": "TOWER",
+                    "description": "Khối căn hộ Fantasy",
+                    "ambient_signals": "Tín hiệu động Fantasy: thang máy tầng cao rung nhẹ.",
+                },
             ],
             bql_agent_ids=[],
             resident_agent_ids=[12, 14],
@@ -3589,6 +3615,178 @@ def test_soc_05_scenario_brief_and_zone_details_caps(tmp_path: Path, monkeypatch
     assert len(bctx["current_zone_detail"].get("description", "")) <= 240
     assert "zone_details" in obs and len(obs["zone_details"]) == 2
     assert all(len(z.get("description", "")) <= 240 for z in obs["zone_details"])
+
+
+def test_zone_crud_and_zero_hardcode_context(tmp_path: Path, monkeypatch):
+    """Zone CRUD (POST/PATCH rename cascade/DELETE 409 + reassign_to) & 100% zero-hardcode dynamic context for non-MulberryLane project."""
+    from agentsociety2.backend.services.urban_sim.db import UrbanSimZone
+
+    monkeypatch.setenv("WORKSPACE_PATH", str(tmp_path))
+    headers = _client_headers(monkeypatch)
+    with TestClient(app, base_url="http://127.0.0.1:8001") as client:
+        # 1. Create clean non-MulberryLane project (zero template seeding)
+        p_res = client.post(
+            "/api/v1/urban-sim/projects",
+            json={
+                "slug": "royal-city-clean",
+                "name": "Khu đô thị Royal City",
+                "default_portal_url": "https://qltn.royal.example.com",
+                "seed_mulberrylane_template": False,
+            },
+            headers=headers,
+        )
+        assert p_res.status_code == 200
+        pid = p_res.json()["project"]["id"]
+
+        # 2. Add 2 custom zones with dynamic ambient_signals
+        z1_res = client.post(
+            f"/api/v1/urban-sim/projects/{pid}/zones",
+            json={
+                "zone_key": "tower r1",
+                "name": "Tòa R1 — Khu Căn hộ",
+                "zone_type": "TOWER",
+                "description": "Khối căn hộ R1 phía Bắc",
+                "ambient_signals": "Tín hiệu động Royal R1: bảo trì bơm tăng áp tầng mái.\nKiểm tra hóa đơn nước kỳ mới.",
+                "sort_order": 1,
+            },
+            headers=headers,
+        )
+        assert z1_res.status_code == 200
+        z1 = z1_res.json()["zone"]
+        assert z1["zone_key"] == "TOWER_R1"
+        assert "Royal R1" in z1["ambient_signals"]
+
+        z2_res = client.post(
+            f"/api/v1/urban-sim/projects/{pid}/zones",
+            json={
+                "zone_key": "LOBBY_R1",
+                "name": "Sảnh Chính Royal",
+                "zone_type": "LOBBY",
+                "description": "Sảnh đón tiếp cư dân",
+                "ambient_signals": "",
+                "sort_order": 2,
+            },
+            headers=headers,
+        )
+        assert z2_res.status_code == 200
+        z2 = z2_res.json()["zone"]
+
+        # 3. Create receptionist at agent_id=105 & resident in TOWER_R1
+        rec_res = client.post(
+            f"/api/v1/urban-sim/projects/{pid}/personas",
+            json={
+                "agent_id": 105,
+                "full_name": "Lễ tân Royal",
+                "role_code": "BQL_RECEPTIONIST",
+                "role_title": "Lễ tân",
+                "group_type": "BQL",
+                "software_access_enabled": True,
+                "home_zone": "LOBBY_R1",
+            },
+            headers=headers,
+        )
+        assert rec_res.status_code == 200
+        res_p = client.post(
+            f"/api/v1/urban-sim/projects/{pid}/personas",
+            json={
+                "agent_id": 201,
+                "full_name": "Cư dân R1",
+                "role_code": "RESIDENT",
+                "role_title": "Chủ hộ",
+                "group_type": "RESIDENT",
+                "software_access_enabled": False,
+                "home_zone": "TOWER_R1",
+            },
+            headers=headers,
+        )
+        assert res_p.status_code == 200
+
+        # 4. PATCH rename zone_key TOWER_R1 -> TOWER_R1_VIP cascades to resident home_zone
+        patch_res = client.patch(
+            f"/api/v1/urban-sim/projects/{pid}/zones/{z1['id']}",
+            json={"zone_key": "TOWER_R1_VIP", "name": "Tòa R1 VIP"},
+            headers=headers,
+        )
+        assert patch_res.status_code == 200
+        assert patch_res.json()["zone"]["zone_key"] == "TOWER_R1_VIP"
+        assert patch_res.json()["zone"]["persona_count"] == 1
+
+        personas_after = client.get(f"/api/v1/urban-sim/projects/{pid}/personas", headers=headers).json()["items"]
+        res_item = next(p for p in personas_after if p["agent_id"] == 201)
+        assert res_item["home_zone"] == "TOWER_R1_VIP"
+
+        # 5. DELETE protected (409 without reassign_to, 200 with reassign_to=LOBBY_R1)
+        del_409 = client.delete(f"/api/v1/urban-sim/projects/{pid}/zones/{z1['id']}", headers=headers)
+        assert del_409.status_code == 409
+
+        del_ok = client.delete(
+            f"/api/v1/urban-sim/projects/{pid}/zones/{z1['id']}?reassign_to=LOBBY_R1",
+            headers=headers,
+        )
+        assert del_ok.status_code == 200 and del_ok.json()["reassigned_personas"] == 1
+
+        # Re-add TOWER_R1_VIP for runtime zero-hardcode compile check
+        z3_res = client.post(
+            f"/api/v1/urban-sim/projects/{pid}/zones",
+            json={
+                "zone_key": "TOWER_R1_VIP",
+                "name": "Tòa R1 VIP",
+                "zone_type": "TOWER",
+                "description": "Khu VIP R1",
+                "ambient_signals": "Tín hiệu động Royal R1: kiểm tra hệ thống PCCC tầng 15.",
+                "sort_order": 3,
+            },
+            headers=headers,
+        )
+        assert z3_res.status_code == 200
+
+    # 6. Verify compile_run_from_db & UrbanCommAndIncidentEnv have ZERO MulberryLane / agent_id=3 hardcodes
+    with Session(get_engine(tmp_path)) as sess:
+        p_row = sess.get(UrbanSimProject, pid)
+        pers_db = list(sess.exec(select(UrbanSimPersona).where(UrbanSimPersona.project_id == pid)).all())
+        zones_db = list(sess.exec(select(UrbanSimZone).where(UrbanSimZone.project_id == pid)).all())
+        atlas = sess.get(UrbanSimAtlasConfig, pid)
+        bundle = compile_run_from_db(
+            project=p_row,
+            personas=pers_db,
+            atlas=atlas,
+            zones=zones_db,
+            run_dir=tmp_path / "royal_compile",
+            workspace_root=tmp_path,
+        )
+
+    prompt_txt = bundle.prompt_overrides_path.read_text(encoding="utf-8")
+    assert "Khu đô thị Royal City" in prompt_txt
+    assert "agent_id=105" in prompt_txt
+    assert "MulberryLane" not in prompt_txt
+    assert "agent_id=3" not in prompt_txt
+
+    env = UrbanCommAndIncidentEnv(
+        project_name="Khu đô thị Royal City",
+        scenario_brief="Thực trạng Royal City: tập trung kiểm tra PCCC và thu phí dịch vụ.",
+        personas=[
+            {"agent_id": 105, "full_name": "Lễ tân Royal", "role_code": "BQL_RECEPTIONIST", "role_title": "Lễ tân", "group_type": "BQL", "home_zone": "LOBBY_R1"},
+            {"agent_id": 201, "full_name": "Cư dân R1", "role_code": "RESIDENT", "role_title": "Chủ hộ", "group_type": "RESIDENT", "home_zone": "TOWER_R1_VIP"},
+        ],
+        zones=[
+            {"zone_key": "LOBBY_R1", "name": "Sảnh Chính Royal", "zone_type": "LOBBY", "description": "Sảnh chính", "ambient_signals": ""},
+            {"zone_key": "TOWER_R1_VIP", "name": "Tòa R1 VIP", "zone_type": "TOWER", "description": "Khu VIP R1", "ambient_signals": "Tín hiệu động Royal R1: kiểm tra hệ thống PCCC tầng 15."},
+        ],
+        bql_agent_ids=[105],
+        resident_agent_ids=[201],
+    )
+    env.t = datetime(2026, 6, 15, 8, 15, tzinfo=timezone.utc)
+    obs_vip = asyncio.run(env.observe_urban_inbox(agent_id=201))
+    bctx_vip = obs_vip["building_context"]
+    joined = json.dumps(obs_vip, ensure_ascii=False)
+    for forbidden in ("MulberryLane", "Zen Tower", "Fantasy Tower", "tháng 6", "agent_id=3"):
+        assert forbidden not in joined
+    assert "Tín hiệu động Royal R1: kiểm tra hệ thống PCCC tầng 15." in bctx_vip["building_signals"]
+    assert "agent_id=105" in bctx_vip["autonomy_guidance"]
+
+    obs_lobby = asyncio.run(env.observe_urban_inbox(agent_id=105))
+    assert any("Sảnh chính" in sig for sig in obs_lobby["building_context"]["building_signals"])
+
 
 
 

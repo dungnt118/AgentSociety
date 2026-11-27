@@ -108,25 +108,19 @@ def _safe_filename(raw_name: str | None, fallback: str = "upload.bin") -> str:
 
 def _detect_map_upload(raw_bytes: bytes, filename: str) -> str:
     lower = filename.lower()
-    if lower.endswith(".pb"):
-        if len(raw_bytes) > _MAX_PB_BYTES:
-            raise HTTPException(status_code=400, detail="File .pb vượt quá giới hạn 25 MB.")
-        if raw_bytes.lstrip().startswith((b"<svg", b"<!DOCTYPE html", b"<html")):
-            raise HTTPException(status_code=400, detail="File .pb không hợp lệ.")
-        return "protobuf"
-
-    if len(raw_bytes) > _MAX_IMAGE_OR_JSON_BYTES:
-        raise HTTPException(status_code=400, detail="File ảnh bản đồ vượt quá giới hạn 5 MB.")
-    if raw_bytes.startswith(b"\x89PNG\r\n\x1a\n"):
-        return "image_2d"
-    if raw_bytes.startswith(b"\xff\xd8\xff"):
-        return "image_2d"
-    if len(raw_bytes) >= 12 and raw_bytes[:4] == b"RIFF" and raw_bytes[8:12] == b"WEBP":
-        return "image_2d"
-    raise HTTPException(
-        status_code=400,
-        detail="Chỉ chấp nhận bản đồ .pb hoặc ảnh PNG/JPEG/WEBP (từ chối SVG/HTML).",
-    )
+    if not lower.endswith(".pb"):
+        raise HTTPException(
+            status_code=415,
+            detail=(
+                "Cổng /maps chỉ chấp nhận bản đồ giao thông định dạng .pb (mosstool). "
+                "Ảnh mặt bằng 2D và Bản đồ Số Khu đô thị được quản lý tại /urban-sim."
+            ),
+        )
+    if len(raw_bytes) > _MAX_PB_BYTES:
+        raise HTTPException(status_code=400, detail="File .pb vượt quá giới hạn 25 MB.")
+    if raw_bytes.lstrip().startswith((b"<svg", b"<!DOCTYPE html", b"<html")):
+        raise HTTPException(status_code=400, detail="File .pb không hợp lệ.")
+    return "protobuf"
 
 
 # ==================== SCHEMAS ====================
@@ -510,7 +504,21 @@ async def list_map_configs():
         rows = session.exec(
             select(PlatformMapConfig).order_by(PlatformMapConfig.updated_at.desc())  # type: ignore[union-attr]
         ).all()
-        return {"data": [serialize_map_config(r) for r in rows]}
+        proj_ids = {r.linked_project_id for r in rows if r.linked_project_id}
+        proj_names: dict[str, str] = {}
+        if proj_ids:
+            for proj in session.exec(select(UrbanSimProject)).all():
+                if proj.id in proj_ids:
+                    proj_names[proj.id] = proj.name
+        return {
+            "data": [
+                serialize_map_config(
+                    r,
+                    linked_project_name=proj_names.get(r.linked_project_id or ""),
+                )
+                for r in rows
+            ]
+        }
 
 
 @router.get("/map-configs/{config_id}")
@@ -520,14 +528,18 @@ async def get_map_config(config_id: str):
         row = session.get(PlatformMapConfig, config_id)
         if row is None:
             raise HTTPException(status_code=404, detail="Không tìm thấy bản đồ")
-        return {"data": serialize_map_config(row)}
+        linked_name: str | None = None
+        if row.linked_project_id:
+            proj = session.get(UrbanSimProject, row.linked_project_id)
+            linked_name = proj.name if proj is not None else None
+        return {"data": serialize_map_config(row, linked_project_name=linked_name)}
 
 
 @router.post("/map-configs/-/upload")
 async def upload_map_file(file: UploadFile = File(...)):
     ws, _ = _init_and_engine()
     raw = await file.read()
-    clean_name = _safe_filename(file.filename, "map.pb")
+    clean_name = _safe_filename(file.filename, "upload.bin")
     map_type = _detect_map_upload(raw, clean_name)
 
     target_dir = resolve_under_root(ws, ".agentsociety", "platform_uploads", "maps")
@@ -543,15 +555,17 @@ async def upload_map_file(file: UploadFile = File(...)):
 async def create_map_config(payload: ConfigPayload):
     _, engine = _init_and_engine()
     cfg = payload.config if isinstance(payload.config, dict) else {}
-    file_path = str(cfg.get("file_path") or "urban_sim://zones").strip()
+    file_path = str(cfg.get("file_path") or "").strip()
     map_type = str(cfg.get("map_type") or "").strip()
+    if map_type == "image_2d" or file_path.lower().endswith((".png", ".jpg", ".jpeg", ".webp", ".svg")):
+        raise HTTPException(
+            status_code=400,
+            detail="Không thể tạo bản đồ ảnh 2D tại /maps. Vui lòng tạo Bản đồ Số trong Mô phỏng Khu đô thị (/urban-sim).",
+        )
+    if not file_path:
+        file_path = "maps/default_map.pb"
     if not map_type:
-        if file_path.startswith("urban_sim://"):
-            map_type = "urban_zones"
-        elif file_path.lower().endswith((".png", ".jpg", ".jpeg", ".webp")):
-            map_type = "image_2d"
-        else:
-            map_type = "protobuf"
+        map_type = "urban_zones" if file_path.startswith("urban_sim://") else "protobuf"
     row = PlatformMapConfig(
         name=payload.name.strip(),
         description=(payload.description or "").strip(),
@@ -574,12 +588,28 @@ async def update_map_config(config_id: str, payload: ConfigPayload):
         row = session.get(PlatformMapConfig, config_id)
         if row is None:
             raise HTTPException(status_code=404, detail="Không tìm thấy bản đồ")
+        is_urban_linked = row.map_type == "urban_zones" or bool((row.linked_project_id or "").strip())
+        next_file_path = str(cfg["file_path"]).strip() if cfg.get("file_path") else None
+        next_map_type = str(cfg["map_type"]).strip() if cfg.get("map_type") else None
+        if is_urban_linked and (
+            (next_file_path is not None and next_file_path != row.file_path)
+            or (next_map_type is not None and next_map_type != row.map_type)
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail="Bản đồ liên kết với Dự án Mô phỏng Khu đô thị (/urban-sim) không thể sửa tệp .pb hoặc loại bản đồ tại đây.",
+            )
+        if next_map_type == "image_2d":
+            raise HTTPException(
+                status_code=400,
+                detail="Không hỗ trợ gán map_type='image_2d' tại /maps. Hãy sử dụng Bản đồ Số trong /urban-sim.",
+            )
         row.name = payload.name.strip()
         row.description = (payload.description or "").strip()
-        if cfg.get("file_path"):
-            row.file_path = str(cfg["file_path"]).strip()
-        if cfg.get("map_type"):
-            row.map_type = str(cfg["map_type"]).strip()
+        if next_file_path:
+            row.file_path = next_file_path
+        if next_map_type:
+            row.map_type = next_map_type
         row.updated_at = _utcnow_iso()
         session.add(row)
         session.commit()
@@ -594,6 +624,16 @@ async def delete_map_config(config_id: str):
         row = session.get(PlatformMapConfig, config_id)
         if row is None:
             raise HTTPException(status_code=404, detail="Không tìm thấy bản đồ")
+        if row.map_type == "urban_zones":
+            raise HTTPException(
+                status_code=409,
+                detail="Không thể xóa bản đồ liên kết UrbanSim (urban_zones) từ menu /maps. Hãy quản lý trực tiếp trong /urban-sim.",
+            )
+        if row.linked_project_id and session.get(UrbanSimProject, row.linked_project_id) is not None:
+            raise HTTPException(
+                status_code=409,
+                detail="Bản đồ đang liên kết tới Dự án UrbanSim còn tồn tại; không thể xóa tại /maps.",
+            )
         session.delete(row)
         session.commit()
         return {"data": {"deleted": config_id}}

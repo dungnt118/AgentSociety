@@ -1,9 +1,10 @@
 import { useAsyncResource } from '../../hooks/useAsyncResource';
 import { useCallback, useRef, useState } from "react";
 import {
-  Button, message, Modal, Space, Tag,
+  Alert, Button, message, Modal, Space, Tag,
   Form, Input, Upload, Typography,
 } from "antd";
+import { useNavigate } from "react-router";
 import { ProTable, ProColumns } from "@ant-design/pro-components";
 import { ActionType } from "@ant-design/pro-table";
 import { useTranslation } from "react-i18next";
@@ -26,6 +27,7 @@ interface SkillItem {
 }
 
 const SkillsPage = () => {
+  const navigate = useNavigate();
   const { t } = useTranslation();
   const actionRef = useRef<ActionType | undefined>(undefined);
   const [createOpen, setCreateOpen] = useState(false);
@@ -229,6 +231,18 @@ const SkillsPage = () => {
 
   return (
     <div style={{ padding: 24 }}>
+      <Alert
+        type="info"
+        showIcon
+        style={{ marginBottom: 16 }}
+        message="Kho Kỹ năng Agent v2 (dùng trực tiếp trong Mô phỏng Khu đô thị)"
+        description="Mọi kỹ năng (SKILL.md) tạo hoặc tải lên tại đây đều có thể chọn gắn trực tiếp cho từng nhân sự Ban Quản lý hoặc Cư dân trong Mô phỏng Khu đô thị → Ma trận Nhân sự & Cư dân để tùy biến tính cách, thói quen sinh hoạt hoặc quy trình nghiệp vụ."
+        action={
+          <Button size="small" type="primary" onClick={() => navigate("/urban-sim")}>
+            Mở Mô phỏng Khu đô thị
+          </Button>
+        }
+      />
       <Paragraph type="secondary">{t("skill.description")}</Paragraph>
       <ProTable<SkillItem>
         headerTitle={t("skill.title")}

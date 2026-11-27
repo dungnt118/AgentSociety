@@ -6,7 +6,7 @@ export default {
         github: 'GitHub',
         v2: 'AgentSociety 2',
         llmConfigs: 'LLM',
-        maps: 'Maps',
+        maps: 'Traffic Maps (.pb)',
         agents: 'Agents',
         agentConfigs: 'Agent Configs',
         agentTemplates: 'Agent Templates',

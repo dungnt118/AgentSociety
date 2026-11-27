@@ -11,8 +11,6 @@ import {
     MoreOutlined,
     NodeIndexOutlined,
     RocketOutlined,
-    SettingOutlined,
-    TeamOutlined,
     ThunderboltOutlined,
 } from "@ant-design/icons";
 import { Button, Drawer, Dropdown, Grid, Menu, MenuProps } from "antd";
@@ -73,34 +71,16 @@ const RootMenu = ({ selectedKey, style }: {
         },
     ];
 
-    const agentSubItems: MenuProps['items'] = [
-        {
-            key: '/agents',
-            label: <Link to="/agents">{t('menu.agents')}</Link>,
-            icon: <TeamOutlined />,
-        },
-        {
-            key: '/agent-templates',
-            label: <Link to="/agent-templates">{t('menu.agentTemplates')}</Link>,
-            icon: <SettingOutlined />,
-        },
-        {
-            key: '/profiles',
-            label: <Link to="/profiles">{t('menu.profiles')}</Link>,
-            icon: <TeamOutlined />,
-        },
-        {
-            key: '/skills',
-            label: <Link to="/skills">{t('menu.skills')}</Link>,
-            icon: <ThunderboltOutlined />,
-        },
-    ];
-
     const primaryMenuItems: MenuProps['items'] = [
         {
             key: '/urban-sim',
             label: <Link to="/urban-sim">Mô phỏng Khu đô thị</Link>,
             icon: <ApartmentOutlined />,
+        },
+        {
+            key: '/skills',
+            label: <Link to="/skills">{t('menu.skills')}</Link>,
+            icon: <ThunderboltOutlined />,
         },
         {
             key: '/llms',
@@ -111,12 +91,6 @@ const RootMenu = ({ selectedKey, style }: {
             key: '/maps',
             label: <Link to="/maps">{t('menu.maps')}</Link>,
             icon: <GlobalOutlined />,
-        },
-        {
-            key: '/agents-group',
-            label: t('menu.agents'),
-            icon: <TeamOutlined />,
-            children: agentSubItems,
         },
         {
             key: '/workflows',
@@ -147,9 +121,7 @@ const RootMenu = ({ selectedKey, style }: {
         ...externalResourceItems,
     ];
 
-    const activeKey = ['/agents', '/agent-templates', '/profiles', '/skills'].includes(selectedKey)
-        ? selectedKey
-        : selectedKey;
+    const activeKey = selectedKey;
 
     const menuStyle: React.CSSProperties = {
         ...style,

@@ -126,34 +126,44 @@ def test_unified_map_upload_survey_and_experiments(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("BACKEND_TOKEN", "")
 
     with TestClient(app, base_url="http://127.0.0.1:8001") as client:
-        # Block disguised SVG upload on map upload
+        # Block image uploads on legacy /maps endpoint (415) & disallow image_2d map creation (400)
         bad_upload = client.post(
             "/api/map-configs/-/upload",
             files={"file": ("evil.png", b"<svg onload='alert(1)'></svg>", "image/png")},
         )
-        assert bad_upload.status_code == 400
+        assert bad_upload.status_code == 415
 
-        # Allow valid PNG 2D floorplan
-        png_bytes = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR"
+        bad_img_create = client.post(
+            "/api/map-configs",
+            json={
+                "name": "Ảnh 2D không hợp lệ ở /maps",
+                "description": "Should reject",
+                "config": {"file_path": "floor.png", "map_type": "image_2d"},
+            },
+        )
+        assert bad_img_create.status_code == 400
+
+        # Allow valid .pb traffic map upload
+        pb_bytes = b"\x08\x01\x12\x0cMulberryMapPb"
         good_upload = client.post(
             "/api/map-configs/-/upload",
-            files={"file": ("floor.png", png_bytes, "image/png")},
+            files={"file": ("traffic_test.pb", pb_bytes, "application/octet-stream")},
         )
         assert good_upload.status_code == 200
         rel_path = good_upload.json()["data"]["file_path"]
-        assert rel_path.endswith("_floor.png")
+        assert rel_path.endswith("_traffic_test.pb")
 
         created_map = client.post(
             "/api/map-configs",
             json={
-                "name": "Sơ đồ Tầng 1 Mulberry",
-                "description": "Test map",
+                "name": "Bản đồ Giao thông Test (.pb)",
+                "description": "Test pb map",
                 "config": {"file_path": rel_path},
             },
         )
         assert created_map.status_code == 200
         map_id = created_map.json()["data"]["id"]
-        assert created_map.json()["data"]["config"]["map_type"] == "image_2d"
+        assert created_map.json()["data"]["config"]["map_type"] == "protobuf"
 
         temp_link = client.post(
             f"/api/map-configs/{map_id}/temp-link",
@@ -377,6 +387,7 @@ def test_llm_catalog_rate_card_and_multiprovider_overrides(tmp_path: Path, monke
         assert pf["effective_llm_thinking"] == "on"
 
         # 7. SSRF blocks private loopback on fetch-models when URBAN_SIM_ALLOW_LOCAL_URLS != 1
+        monkeypatch.delenv("URBAN_SIM_ALLOW_LOCAL_URLS", raising=False)
         ssrf_resp = client.post(
             "/api/llm-configs/fetch-models",
             json={

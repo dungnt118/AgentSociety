@@ -34,11 +34,13 @@ import {
     message,
 } from "antd";
 import type { ColumnsType } from "antd/es/table";
-import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useNavigate, useSearchParams } from "react-router";
 import {
+    DigitalMapMeta,
     PreflightReport,
     urbanSimApi,
+    UrbanSimCheckpoint,
     UrbanSimPersona,
     UrbanSimProjectSummary,
     UrbanSimRun,
@@ -165,6 +167,8 @@ function FieldHelpPopover({ title, content }: { title: string; content: React.Re
 
 export default function UrbanSimConsolePage() {
     const navigate = useNavigate();
+    const [searchParams] = useSearchParams();
+    const mapSectionRef = useRef<HTMLDivElement | null>(null);
     const screens = Grid.useBreakpoint();
     const isMobile = screens.md === false;
     const [loading, setLoading] = useState(true);
@@ -173,6 +177,9 @@ export default function UrbanSimConsolePage() {
     const [preflight, setPreflight] = useState<PreflightReport | null>(null);
     const [runs, setRuns] = useState<UrbanSimRun[]>([]);
     const [zones, setZones] = useState<UrbanSimZone[]>([]);
+    const [checkpoints, setCheckpoints] = useState<UrbanSimCheckpoint[]>([]);
+    const [digitalMapMeta, setDigitalMapMeta] = useState<DigitalMapMeta | undefined>(undefined);
+    const [hasDigitalMap, setHasDigitalMap] = useState<boolean>(false);
     const [personas, setPersonas] = useState<UrbanSimPersona[]>([]);
     const [llmConfigs, setLlmConfigs] = useState<Array<{ id: string; name: string; modelLabel: string }>>([]);
     const [saving, setSaving] = useState(false);
@@ -221,18 +228,62 @@ export default function UrbanSimConsolePage() {
         latestRun && ["PAUSED", "FAILED", "COMPLETED_WITH_ERRORS"].includes(latestRun.status)
     );
 
+    const reloadDigitalMap = useCallback(async (projectId: string) => {
+        const [projDetail, zoneRes, cpRes, personaList] = await Promise.all([
+            urbanSimApi.getProject(projectId),
+            urbanSimApi.listZones(projectId),
+            urbanSimApi.listCheckpoints(projectId).catch(() => ({ has_digital_map: false, items: [] })),
+            urbanSimApi.listPersonas(projectId).catch(() => null),
+        ]);
+        // Only update digital map / project summary metadata; NEVER overwrite Project Form fields
+        setProjects((prev) => prev.map((p) => (p.id === projectId ? projDetail : p)));
+        setZones(zoneRes.items || []);
+        setCheckpoints(cpRes.items || []);
+        if (personaList) {
+            setPersonas(personaList);
+        }
+        const resolvedHasDigitalMap = Boolean(
+            zoneRes.has_digital_map ?? cpRes.has_digital_map ?? projDetail.has_digital_map
+        );
+        setHasDigitalMap(resolvedHasDigitalMap);
+        setDigitalMapMeta({
+            has_digital_map: resolvedHasDigitalMap,
+            map_prompt: zoneRes.map_prompt ?? projDetail.map_prompt ?? "",
+            map_width: zoneRes.map_width ?? projDetail.map_width,
+            map_height: zoneRes.map_height ?? projDetail.map_height,
+            map_aspect_ratio: zoneRes.map_aspect_ratio ?? projDetail.map_aspect_ratio ?? 1.6,
+            map_image_version: zoneRes.map_image_version ?? projDetail.map_image_version ?? 0,
+            has_map_image: Boolean(zoneRes.has_zone_map_image ?? projDetail.has_zone_map_image),
+        });
+    }, []);
+
     const loadProjectDetails = useCallback(async (projectId: string) => {
-        const [projDetail, pf, runList, zoneRes, personaList] = await Promise.all([
+        const [projDetail, pf, runList, zoneRes, cpRes, personaList] = await Promise.all([
             urbanSimApi.getProject(projectId),
             urbanSimApi.getPreflight(projectId),
             urbanSimApi.listRuns(projectId),
             urbanSimApi.listZones(projectId),
+            urbanSimApi.listCheckpoints(projectId).catch(() => ({ has_digital_map: false, items: [] })),
             urbanSimApi.listPersonas(projectId).catch(() => []),
         ]);
         setProjects((prev) => prev.map((p) => (p.id === projectId ? projDetail : p)));
         setPreflight(pf);
         setRuns(runList);
         setZones(zoneRes.items || []);
+        setCheckpoints(cpRes.items || []);
+        const resolvedHasDigitalMap = Boolean(
+            zoneRes.has_digital_map ?? cpRes.has_digital_map ?? projDetail.has_digital_map
+        );
+        setHasDigitalMap(resolvedHasDigitalMap);
+        setDigitalMapMeta({
+            has_digital_map: resolvedHasDigitalMap,
+            map_prompt: zoneRes.map_prompt ?? projDetail.map_prompt ?? "",
+            map_width: zoneRes.map_width ?? projDetail.map_width,
+            map_height: zoneRes.map_height ?? projDetail.map_height,
+            map_aspect_ratio: zoneRes.map_aspect_ratio ?? projDetail.map_aspect_ratio ?? 1.6,
+            map_image_version: zoneRes.map_image_version ?? projDetail.map_image_version ?? 0,
+            has_map_image: Boolean(zoneRes.has_zone_map_image ?? projDetail.has_zone_map_image),
+        });
         setPersonas(personaList);
         form.setFieldsValue({
             name: projDetail.name,
@@ -254,6 +305,8 @@ export default function UrbanSimConsolePage() {
 
     useEffect(() => {
         let active = true;
+        const requestedProjectId = searchParams.get("projectId");
+        const focusTarget = searchParams.get("focus");
         async function initLoad() {
             try {
                 const [list, llmList] = await Promise.all([
@@ -272,9 +325,17 @@ export default function UrbanSimConsolePage() {
                     })
                 );
                 if (list.length > 0) {
-                    const targetId = list[0].id;
+                    const matched = requestedProjectId
+                        ? list.find((p) => p.id === requestedProjectId || p.slug === requestedProjectId)
+                        : null;
+                    const targetId = matched ? matched.id : list[0].id;
                     setSelectedId(targetId);
                     await loadProjectDetails(targetId);
+                    if (active && focusTarget === "map") {
+                        window.setTimeout(() => {
+                            mapSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+                        }, 150);
+                    }
                 }
             } catch (err) {
                 if (active) {
@@ -288,7 +349,7 @@ export default function UrbanSimConsolePage() {
         return () => {
             active = false;
         };
-    }, [loadProjectDetails]);
+    }, [loadProjectDetails, searchParams]);
 
     useEffect(() => {
         if (!selectedId || !isLatestActive) return;
@@ -1031,13 +1092,19 @@ export default function UrbanSimConsolePage() {
                             </Form>
                         </Card>
 
-                        <UrbanZoneMap
-                            projectId={selectedProject.id}
-                            hasZoneMapImage={selectedProject.has_zone_map_image}
-                            staticZones={zones}
-                            editableMap
-                            onMapUpdated={() => void loadProjectDetails(selectedProject.id)}
-                        />
+                        <div ref={mapSectionRef}>
+                            <UrbanZoneMap
+                                projectId={selectedProject.id}
+                                hasZoneMapImage={selectedProject.has_zone_map_image}
+                                hasDigitalMap={hasDigitalMap}
+                                digitalMap={digitalMapMeta}
+                                staticZones={zones}
+                                checkpoints={checkpoints}
+                                staticPersonas={personas}
+                                editableMap
+                                onMapUpdated={() => void reloadDigitalMap(selectedProject.id)}
+                            />
+                        </div>
 
                         <Card size="small" title={`Lịch sử các lần chạy (${runs.length})`}>
                             <Table
@@ -1121,7 +1188,7 @@ export default function UrbanSimConsolePage() {
                     </Form.Item>
                     <Form.Item
                         name="seed_mulberrylane_template"
-                        label="Nạp sẵn khung Persona mẫu (12 BQL gồm Kế toán Công nợ + 10 Cư dân) & 9 Zone MulberryLane"
+                        label="Nạp sẵn khung Nhân sự mẫu (12 BQL gồm Kế toán Công nợ + 10 Cư dân) & 9 Khu vực MulberryLane"
                         valuePropName="checked"
                         extra="Bật để tạo sẵn 12 nhân sự BQL + 10 cư dân và sơ đồ 9 khu vực mẫu, giúp chạy thử ngay."
                     >
